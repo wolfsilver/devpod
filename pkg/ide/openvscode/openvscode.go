@@ -22,9 +22,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// https://github.com/W4WX/openvscode-server/releases/download/openvscode-server-v1.94.0/openvscode-server-v1.94.0-linux-arm64.tar.gz
 const (
-	DownloadAmd64Template = "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-%s/openvscode-server-%s-linux-x64.tar.gz"
-	DownloadArm64Template = "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-%s/openvscode-server-%s-linux-arm64.tar.gz"
+	DownloadAmd64Template = "https://github.com/%s/openvscode-server/releases/download/openvscode-server-%s/openvscode-server-%s-linux-x64.tar.gz"
+	DownloadArm64Template = "https://github.com/%s/openvscode-server/releases/download/openvscode-server-%s/openvscode-server-%s-linux-arm64.tar.gz"
 )
 
 const (
@@ -34,6 +35,7 @@ const (
 	VersionOption       = "VERSION"
 	DownloadAmd64Option = "DOWNLOAD_AMD64"
 	DownloadArm64Option = "DOWNLOAD_ARM64"
+	GithubOrg           = "GITHUB_ORG"
 )
 
 var Options = ide.Options{
@@ -73,6 +75,11 @@ var Options = ide.Options{
 		Name:        DownloadAmd64Option,
 		Description: "The download url for the amd64 vscode server binary",
 	},
+	GithubOrg: {
+		Name:        GithubOrg,
+		Description: "The org of github",
+		Default:     "gitpod-io",
+	}
 }
 
 const DefaultVSCodePort = 10800
@@ -158,16 +165,17 @@ func (o *OpenVSCodeServer) Install() error {
 func (o *OpenVSCodeServer) getReleaseUrl() string {
 	var url string
 	version := Options.GetValue(o.values, VersionOption)
+	githubOrg := Options.GetValue(o.values, GithubOrg)
 
 	if runtime.GOARCH == "arm64" {
 		url = Options.GetValue(o.values, DownloadArm64Option)
 		if url == "" {
-			url = fmt.Sprintf(DownloadArm64Template, version, version)
+			url = fmt.Sprintf(DownloadArm64Template, githubOrg, version, version)
 		}
 	} else {
 		url = Options.GetValue(o.values, DownloadAmd64Option)
 		if url == "" {
-			url = fmt.Sprintf(DownloadAmd64Template, version, version)
+			url = fmt.Sprintf(DownloadAmd64Template, githubOrg, version, version)
 		}
 	}
 

@@ -88,31 +88,31 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - host: macos-latest
-            target: x86_64-apple-darwin
-            os: darwin
-            arch: amd64
-            cli_only: false
-          - host: macos-latest
-            target: aarch64-apple-darwin
-            os: darwin
-            arch: arm64
-            cli_only: false
-          # The WIX version we use for the installer (latest 3.something) doesn't support arm builds - if we need to support arm windows,
-          # we'd need to switch the installer toolchain to WIX 4.xx, not sure how that works out with tauri
-          # - host: windows-latest
-          #   target: aarch64-pc-windows-msvc
+          # - host: macos-latest
+          #   target: x86_64-apple-darwin
+          #   os: darwin
+          #   arch: amd64
+          #   cli_only: false
+          # - host: macos-latest
+          #   target: aarch64-apple-darwin
+          #   os: darwin
           #   arch: arm64
-          #   cli-only: false
-          - host: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: amd64
-            cli_only: false
-          - host: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            os: linux
-            arch: amd64
-            cli_only: false
+          #   cli_only: false
+          # # The WIX version we use for the installer (latest 3.something) doesn't support arm builds - if we need to support arm windows,
+          # # we'd need to switch the installer toolchain to WIX 4.xx, not sure how that works out with tauri
+          # # - host: windows-latest
+          # #   target: aarch64-pc-windows-msvc
+          # #   arch: arm64
+          # #   cli-only: false
+          # - host: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   arch: amd64
+          #   cli_only: false
+          # - host: ubuntu-22.04
+          #   target: x86_64-unknown-linux-gnu
+          #   os: linux
+          #   arch: amd64
+          #   cli_only: false
           - host: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             os: linux
@@ -395,7 +395,7 @@ jobs:
 
           VERSION="v${{ needs.create-release.outputs.original_package_version }}"
           OUT_DIR="release"
-          ASSETS="devpod-darwin-amd64 devpod-darwin-arm64 devpod-linux-amd64 devpod-linux-arm64 devpod-windows-amd64.exe"
+          ASSETS="devpod-linux-arm64"
 
           echo "Prepare output directory $OUT_DIR..."
           if [ ! -d "$OUT_DIR" ]; then
@@ -414,7 +414,7 @@ jobs:
           printf "Done\n\n"
 
           echo "Generate provider.yaml..."
-          go run ./hack/pro/main.go $VERSION > ./release/provider.yaml
+          PARTIAL="true" go run ./hack/pro/main.go $VERSION > ./release/provider.yaml
           printf "Done\n\n"
 
           echo "Upload provider.yaml..."

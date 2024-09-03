@@ -77,9 +77,9 @@ var Options = ide.Options{
 	},
 	GithubOrg: {
 		Name:        GithubOrg,
-		Description: "The org of github",
+		Description: "The github org to download the binary from",
 		Default:     "gitpod-io",
-	}
+	},
 }
 
 const DefaultVSCodePort = 10800

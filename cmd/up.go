@@ -26,6 +26,7 @@ import (
 	"github.com/loft-sh/devpod/pkg/ide/jetbrains"
 	"github.com/loft-sh/devpod/pkg/ide/jupyter"
 	"github.com/loft-sh/devpod/pkg/ide/openvscode"
+	"github.com/loft-sh/devpod/pkg/ide/openvscodeweb"
 	"github.com/loft-sh/devpod/pkg/ide/vscode"
 	"github.com/loft-sh/devpod/pkg/loft"
 	open2 "github.com/loft-sh/devpod/pkg/open"
@@ -266,6 +267,19 @@ func (cmd *UpCmd) Run(
 			)
 		case string(config.IDEOpenVSCode):
 			return startVSCodeInBrowser(
+				cmd.GPGAgentForwarding,
+				ctx,
+				devPodConfig,
+				client,
+				result.SubstitutionContext.ContainerWorkspaceFolder,
+				user,
+				ideConfig.Options,
+				cmd.GitUsername,
+				cmd.GitToken,
+				log,
+			)
+		case string(config.IDEOpenVSCodeWeb):
+			return startVSCodeWebInBrowser(
 				cmd.GPGAgentForwarding,
 				ctx,
 				devPodConfig,
@@ -659,6 +673,65 @@ func startVSCodeInBrowser(
 	logger.Infof("Starting vscode in browser mode at %s", targetURL)
 	forwardPorts := openvscode.Options.GetValue(ideOptions, openvscode.ForwardPortsOption) == "true"
 	extraPorts := []string{fmt.Sprintf("%s:%d", vscodeAddress, openvscode.DefaultVSCodePort)}
+	return startBrowserTunnel(
+		ctx,
+		devPodConfig,
+		client,
+		user,
+		targetURL,
+		forwardPorts,
+		extraPorts,
+		gitUsername,
+		gitToken,
+		logger,
+	)
+}
+
+func startVSCodeWebInBrowser(
+	forwardGpg bool,
+	ctx context.Context,
+	devPodConfig *config.Config,
+	client client2.BaseWorkspaceClient,
+	workspaceFolder, user string,
+	ideOptions map[string]config.OptionValue,
+	gitUsername, gitToken string,
+	logger log.Logger,
+) error {
+	if forwardGpg {
+		err := performGpgForwarding(client, logger)
+		if err != nil {
+			return err
+		}
+	}
+
+	// determine port
+	vscodeAddress, vscodePort, err := parseAddressAndPort(
+		openvscodeweb.Options.GetValue(ideOptions, openvscodeweb.BindAddressOption),
+		openvscodeweb.DefaultVSCodePort,
+	)
+	if err != nil {
+		return err
+	}
+
+	// wait until reachable then open browser
+	targetURL := fmt.Sprintf("http://localhost:%d/?folder=%s", vscodePort, workspaceFolder)
+	if openvscodeweb.Options.GetValue(ideOptions, openvscodeweb.OpenOption) == "true" {
+		go func() {
+			err = open2.Open(ctx, targetURL, logger)
+			if err != nil {
+				logger.Errorf("error opening vscode: %v", err)
+			}
+
+			logger.Infof(
+				"Successfully started vscode in browser mode. Please keep this terminal open as long as you use VSCode browser version",
+			)
+		}()
+	}
+
+	// start in browser
+	logger.Infof("Starting vscode in browser mode at %s", targetURL)
+	forwardPorts := openvscodeweb.Options.GetValue(ideOptions, openvscodeweb.ForwardPortsOption) == "true"
+	extraPorts := []string{fmt.Sprintf("%s:%d", vscodeAddress, openvscodeweb.DefaultVSCodePort)}
 	return startBrowserTunnel(
 		ctx,
 		devPodConfig,

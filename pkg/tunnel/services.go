@@ -18,7 +18,7 @@ import (
 	config2 "github.com/loft-sh/devpod/pkg/devcontainer/config"
 	"github.com/loft-sh/devpod/pkg/devcontainer/setup"
 	"github.com/loft-sh/devpod/pkg/gitsshsigning"
-	"github.com/loft-sh/devpod/pkg/ide/openvscode"
+	"github.com/loft-sh/devpod/pkg/ide/openvscodeweb"
 	"github.com/loft-sh/devpod/pkg/netstat"
 	devssh "github.com/loft-sh/devpod/pkg/ssh"
 	"github.com/loft-sh/log"
@@ -84,7 +84,7 @@ func RunInContainer(
 		// create a port forwarder
 		var forwarder netstat.Forwarder
 		if forwardPorts {
-			forwarder = newForwarder(containerClient, append(forwardedPorts, fmt.Sprintf("%d", openvscode.DefaultVSCodePort)), log)
+			forwarder = newForwarder(containerClient, append(forwardedPorts, fmt.Sprintf("%d", openvscodeweb.DefaultVSCodePort)), log)
 		}
 
 		errChan := make(chan error, 1)

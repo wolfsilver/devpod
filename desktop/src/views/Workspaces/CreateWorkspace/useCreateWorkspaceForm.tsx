@@ -62,7 +62,7 @@ export function useCreateWorkspaceForm(onCreateWorkspace: (args: TCreateWorkspac
         const defaultIDE =
           params.ide ??
           ides.find((ide) => ide.default)?.name ??
-          ides.find((ide) => ide.name === "openvscode")?.name ??
+          ides.find((ide) => ide.name === "openvscodeweb")?.name ??
           ""
 
         const defaultWorkspaceID = params.workspaceID ?? ""

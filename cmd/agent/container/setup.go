@@ -31,6 +31,7 @@ import (
 	"github.com/loft-sh/devpod/pkg/ide/jetbrains"
 	"github.com/loft-sh/devpod/pkg/ide/jupyter"
 	"github.com/loft-sh/devpod/pkg/ide/openvscode"
+	"github.com/loft-sh/devpod/pkg/ide/openvscodeweb"
 	"github.com/loft-sh/devpod/pkg/ide/vscode"
 	provider2 "github.com/loft-sh/devpod/pkg/provider"
 	"github.com/loft-sh/devpod/pkg/single"
@@ -384,6 +385,8 @@ func (cmd *SetupContainerCmd) installIDE(setupInfo *config.Result, ide *provider
 		return cmd.setupVSCode(setupInfo, ide.Options, vscode.ReleaseChannelInsiders, log)
 	case string(config2.IDEOpenVSCode):
 		return cmd.setupOpenVSCode(setupInfo, ide.Options, log)
+	case string(config2.IDEOpenVSCodeWeb):
+		return cmd.setupOpenVSCodeWeb(setupInfo, ide.Options, log)
 	case string(config2.IDEGoland):
 		return jetbrains.NewGolandServer(config.GetRemoteUser(setupInfo), ide.Options, log).Install()
 	case string(config2.IDERustRover):
@@ -468,6 +471,12 @@ func setupOpenVSCodeExtensions(setupInfo *config.Result, log log.Logger) error {
 	return openvscode.NewOpenVSCodeServer(vsCodeConfiguration.Extensions, "", user, "", "", nil, log).InstallExtensions()
 }
 
+func setupOpenVSCodeWebExtensions(setupInfo *config.Result, log log.Logger) error {
+	vsCodeConfiguration := config.GetVSCodeConfiguration(setupInfo.MergedConfig)
+	user := config.GetRemoteUser(setupInfo)
+	return openvscodeweb.NewOpenVSCodeWebServer(vsCodeConfiguration.Extensions, "", user, "", "", nil, log).InstallExtensions()
+}
+
 func (cmd *SetupContainerCmd) setupOpenVSCode(setupInfo *config.Result, ideOptions map[string]config2.OptionValue, log log.Logger) error {
 	log.Debugf("Setup openvscode...")
 	vsCodeConfiguration := config.GetVSCodeConfiguration(setupInfo.MergedConfig)
@@ -508,6 +517,48 @@ func (cmd *SetupContainerCmd) setupOpenVSCode(setupInfo *config.Result, ideOptio
 
 	// start the server in the background
 	return openVSCode.Start()
+}
+
+func (cmd *SetupContainerCmd) setupOpenVSCodeWeb(setupInfo *config.Result, ideOptions map[string]config2.OptionValue, log log.Logger) error {
+	log.Debugf("Setup openvscodeweb...")
+	vsCodeConfiguration := config.GetVSCodeConfiguration(setupInfo.MergedConfig)
+	settings := ""
+	if len(vsCodeConfiguration.Settings) > 0 {
+		out, err := json.Marshal(vsCodeConfiguration.Settings)
+		if err != nil {
+			return err
+		}
+
+		settings = string(out)
+	}
+
+	user := config.GetRemoteUser(setupInfo)
+	openVSCodeWeb := openvscodeweb.NewOpenVSCodeWebServer(vsCodeConfiguration.Extensions, settings, user, "0.0.0.0", strconv.Itoa(openvscode.DefaultVSCodePort), ideOptions, log)
+
+	// install open vscode
+	err := openVSCodeWeb.Install()
+	if err != nil {
+		return err
+	}
+
+	// install extensions in background
+	if len(vsCodeConfiguration.Extensions) > 0 {
+		err = single.Single("openvscodeweb-async.pid", func() (*exec.Cmd, error) {
+			log.Infof("Install extensions '%s' in the background", strings.Join(vsCodeConfiguration.Extensions, ","))
+			binaryPath, err := os.Executable()
+			if err != nil {
+				return nil, err
+			}
+
+			return exec.Command(binaryPath, "agent", "container", "openvscodeweb-async", "--setup-info", cmd.SetupInfo), nil
+		})
+		if err != nil {
+			return errors.Wrap(err, "install extensions")
+		}
+	}
+
+	// start the server in the background
+	return openVSCodeWeb.Start()
 }
 
 func configureSystemGitCredentials(ctx context.Context, cancel context.CancelFunc, client tunnel.TunnelClient, log log.Logger) (func(), error) {

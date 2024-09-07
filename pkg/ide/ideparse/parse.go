@@ -13,6 +13,7 @@ import (
 	"github.com/loft-sh/devpod/pkg/ide/jetbrains"
 	"github.com/loft-sh/devpod/pkg/ide/jupyter"
 	"github.com/loft-sh/devpod/pkg/ide/openvscode"
+	"github.com/loft-sh/devpod/pkg/ide/openvscodeweb"
 	"github.com/loft-sh/devpod/pkg/ide/vscode"
 	"github.com/loft-sh/devpod/pkg/provider"
 	"github.com/pkg/errors"
@@ -51,6 +52,12 @@ var AllowedIDEs = []AllowedIDE{
 		Name:        config.IDEOpenVSCode,
 		DisplayName: "VSCode Browser",
 		Options:     openvscode.Options,
+		Icon:        "https://devpod.sh/assets/vscodebrowser.svg",
+	},
+	{
+		Name:        config.IDEOpenVSCodeWeb,
+		DisplayName: "VSCodeWeb Browser",
+		Options:     openvscodeweb.Options,
 		Icon:        "https://devpod.sh/assets/vscodebrowser.svg",
 	},
 	{
@@ -279,5 +286,5 @@ func detect() string {
 		return string(config.IDEVSCode)
 	}
 
-	return string(config.IDEOpenVSCode)
+	return string(config.IDEOpenVSCodeWeb)
 }

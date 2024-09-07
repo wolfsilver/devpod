@@ -191,6 +191,7 @@ export const SUPPORTED_IDES = [
   "rider",
   "webstorm",
   "openvscode",
+  "openvscodeweb",
   "jupyternotebook",
   "fleet",
 ] as const

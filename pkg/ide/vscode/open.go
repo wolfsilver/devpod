@@ -3,6 +3,7 @@ package vscode
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -78,22 +79,34 @@ func openViaCLI(ctx context.Context, workspace, folder string, newWindow bool, r
 	}
 
 	// open vscode via cli
-	args := make([]string, 0, 5)
+	args := make([]string, 0, 9)
 	if foundContainers {
 		args = append(args, "--disable-extension", "ms-vscode-remote.remote-containers")
 	}
-	if newWindow {
-		args = append(args, "--new-window")
+
+	// if current environment has USE_SERVE_WEV, use serve-web
+	if _, ok := os.LookupEnv("USE_SERVE_WEB"); ok {
+		args = append(args, "serve-web", "--host", "0.0.0.0", "--without-connection-token", "--accept-server-license-terms")
+		args = append(args, "--server-base-path", folder)
+		log.Debugf("Run vscode command %s %s", codePath, strings.Join(args, " "))
+		out, err = exec.CommandContext(ctx, codePath, args...).CombinedOutput()
+		if err != nil {
+			return command.WrapCommandError(out, err)
+		}
 	} else {
-		args = append(args, "--reuse-window")
-	}
-	// Needs to be separated by `=` because of windows
-	folderUriArg := fmt.Sprintf("--folder-uri=vscode-remote://ssh-remote+%s.devpod/%s", workspace, folder)
-	args = append(args, folderUriArg)
-	log.Debugf("Run vscode command %s %s", codePath, strings.Join(args, " "))
-	out, err = exec.CommandContext(ctx, codePath, args...).CombinedOutput()
-	if err != nil {
-		return command.WrapCommandError(out, err)
+		if newWindow {
+			args = append(args, "--new-window")
+		} else {
+			args = append(args, "--reuse-window")
+		}
+		// Needs to be separated by `=` because of windows
+		folderUriArg := fmt.Sprintf("--folder-uri=vscode-remote://ssh-remote+%s.devpod/%s", workspace, folder)
+		args = append(args, folderUriArg)
+		log.Debugf("Run vscode command %s %s", codePath, strings.Join(args, " "))
+		out, err = exec.CommandContext(ctx, codePath, args...).CombinedOutput()
+		if err != nil {
+			return command.WrapCommandError(out, err)
+		}
 	}
 
 	return nil

@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	DownloadAmd64Template = "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-%s/openvscode-server-%s-linux-x64.tar.gz"
-	DownloadArm64Template = "https://github.com/gitpod-io/openvscode-server/releases/download/openvscode-server-%s/openvscode-server-%s-linux-arm64.tar.gz"
+	DownloadAmd64Template = "https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64"
+	DownloadArm64Template = "https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-arm64"
 )
 
 const (
@@ -116,7 +116,7 @@ func (o *OpenVSCodeServer) Install() error {
 	}
 
 	// is installed
-	_, err = os.Stat(filepath.Join(location, "bin"))
+	_, err = os.Stat(filepath.Join(location, "code"))
 	if err == nil {
 		return nil
 	}
@@ -133,7 +133,7 @@ func (o *OpenVSCodeServer) Install() error {
 	}
 	defer resp.Body.Close()
 
-	err = extract.Extract(resp.Body, location, extract.StripLevels(1))
+	err = extract.Extract(resp.Body, location, extract.StripLevels(0))
 	if err != nil {
 		return errors.Wrap(err, "extract vscode")
 	}
@@ -157,17 +157,17 @@ func (o *OpenVSCodeServer) Install() error {
 
 func (o *OpenVSCodeServer) getReleaseUrl() string {
 	var url string
-	version := Options.GetValue(o.values, VersionOption)
+	// version := Options.GetValue(o.values, VersionOption)
 
 	if runtime.GOARCH == "arm64" {
 		url = Options.GetValue(o.values, DownloadArm64Option)
 		if url == "" {
-			url = fmt.Sprintf(DownloadArm64Template, version, version)
+			url = DownloadArm64Template
 		}
 	} else {
 		url = Options.GetValue(o.values, DownloadAmd64Option)
 		if url == "" {
-			url = fmt.Sprintf(DownloadAmd64Template, version, version)
+			url = DownloadAmd64Template
 		}
 	}
 
@@ -187,7 +187,7 @@ func (o *OpenVSCodeServer) installExtensions() error {
 	out := o.log.Writer(logrus.InfoLevel, false)
 	defer out.Close()
 
-	binaryPath := filepath.Join(location, "bin", "openvscode-server")
+	binaryPath := filepath.Join(location, "code")
 	for _, extension := range o.extensions {
 		o.log.Info("Install extension " + extension + "...")
 		runCommand := fmt.Sprintf("%s --install-extension '%s'", binaryPath, extension)
@@ -253,7 +253,7 @@ func (o *OpenVSCodeServer) Start() error {
 		o.port = strconv.Itoa(DefaultVSCodePort)
 	}
 
-	binaryPath := filepath.Join(location, "bin", "openvscode-server")
+	binaryPath := filepath.Join(location, "code")
 	_, err = os.Stat(binaryPath)
 	if err != nil {
 		return errors.Wrap(err, "find binary")
@@ -261,7 +261,7 @@ func (o *OpenVSCodeServer) Start() error {
 
 	return single.Single("openvscode.pid", func() (*exec.Cmd, error) {
 		o.log.Infof("Starting openvscode in background...")
-		runCommand := fmt.Sprintf("%s server-local --without-connection-token --host '%s' --port '%s'", binaryPath, o.host, o.port)
+		runCommand := fmt.Sprintf("%s serve-web --without-connection-token --accept-server-license-terms --host '%s' --port '%s'", binaryPath, o.host, o.port)
 		args := []string{}
 		if o.userName != "" {
 			args = append(args, "su", o.userName, "-c", runCommand)

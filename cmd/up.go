@@ -685,7 +685,7 @@ func parseAddressAndPort(bindAddressOption string, defaultPort int) (string, int
 			return "", 0, err
 		}
 
-		address = fmt.Sprintf("%d", portName)
+		address = fmt.Sprintf("0.0.0.0:%d", portName)
 	} else {
 		address = bindAddressOption
 		_, port, err := net.SplitHostPort(address)

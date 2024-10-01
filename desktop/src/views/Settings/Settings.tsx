@@ -39,15 +39,20 @@ import {
 } from "../../lib"
 import { useWelcomeModal } from "../../useWelcomeModal"
 import {
-  useDotfilesOption,
-  useSSHKeySignatureOption,
-  useCLIFlagsOption,
   useAgentURLOption,
+  useDockerCredentialsForwardingOption,
+  useGitCredentialsForwardingOption,
   useTelemetryOption,
-  useExtraEnvVarsOption,
-  useProxyOptions,
 } from "./useContextOptions"
 import { useIDESettings } from "./useIDESettings"
+import {
+  useCLIFlagsOption,
+  useDotfilesOption,
+  useExtraEnvVarsOption,
+  useProxyOptions,
+  useSSHKeySignatureOption,
+} from "./useSettingsOptions"
+import { compareVersions } from "compare-versions"
 
 const SETTINGS_TABS = [
   { label: "General", component: <GeneralSettings /> },
@@ -159,11 +164,14 @@ function CustomizationSettings() {
   const { input: gitSSHSignatureInput } = useSSHKeySignatureOption()
   const { settings, set } = useChangeSettings()
   const { ides, defaultIDE, updateDefaultIDE } = useIDESettings()
+  const { input: dockerCredentialForwardingInput, helpText: dockerCredentialForwardingHelpText } =
+    useDockerCredentialsForwardingOption()
+  const { input: gitCredentialForwardingInput, helpText: gitCredentialForwardingHelpText } =
+    useGitCredentialsForwardingOption()
 
   return (
     <>
       <SettingSection
-        showDivider={true}
         title="IDE"
         description="Select the default IDE you're using for workspaces. This will be overridden whenever you create a workspace with a different IDE. You can prevent this by checking the 'Always use this IDE' checkbox">
         <>
@@ -185,17 +193,30 @@ function CustomizationSettings() {
           </Checkbox>
         </>
       </SettingSection>
+
       <SettingSection
-        showDivider={true}
         title="Dotfiles"
         description="Set the dotfiles git repository to use inside workspaces">
         {dotfilesInput}
       </SettingSection>
+
       <SettingSection
-        showDivider={false}
         title="SSH Key for Git commit signing"
         description="Set path of your SSH key you want to use for signing Git commits">
         {gitSSHSignatureInput}
+      </SettingSection>
+
+      <SettingSection
+        title="Docker credentials forwarding"
+        description={dockerCredentialForwardingHelpText}>
+        {dockerCredentialForwardingInput}
+      </SettingSection>
+
+      <SettingSection
+        showDivider={false}
+        title="Git credentials forwarding"
+        description={gitCredentialForwardingHelpText}>
+        {gitCredentialForwardingInput}
       </SettingSection>
     </>
   )
@@ -246,12 +267,14 @@ function AppearanceSettings() {
 }
 function UpdateSettings() {
   const { settings, set } = useChangeSettings()
-  const releases = useReleases()
   const platform = usePlatform()
   const arch = useArch()
   const version = useVersion()
   const [selectedVersion, setSelectedVersion] = useState<string | undefined>(undefined)
   const { isChecking, check, isUpdateAvailable, pendingUpdate } = useUpdate()
+  const releases = useReleases()
+    ?.slice()
+    .sort((a, b) => compareVersions(a.tag_name, b.tag_name))
   const downloadLink = useMemo(() => {
     const release = releases?.find((release) => release.tag_name === selectedVersion)
     if (!release) {

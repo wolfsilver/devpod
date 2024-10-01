@@ -176,6 +176,9 @@ type AgentWorkspaceInfo struct {
 
 	// InjectTimeout specifies how long to wait for the agent to be injected into the dev container
 	InjectTimeout time.Duration `json:"injectTimeout,omitempty"`
+
+	// RegistryCache defines the registry to use for caching builds
+	RegistryCache string `json:"registryCache,omitempty"`
 }
 
 type CLIOptions struct {
@@ -188,6 +191,7 @@ type CLIOptions struct {
 	DevContainerImage    string            `json:"devContainerImage,omitempty"`
 	DevContainerPath     string            `json:"devContainerPath,omitempty"`
 	DevContainerSource   string            `json:"devContainerSource,omitempty"`
+	EnvironmentTemplate  string            `json:"environmentTemplate,omitempty"`
 	WorkspaceEnv         []string          `json:"workspaceEnv,omitempty"`
 	WorkspaceEnvFile     []string          `json:"workspaceEnvFile,omitempty"`
 	InitEnv              []string          `json:"initEnv,omitempty"`
@@ -215,8 +219,10 @@ type CLIOptions struct {
 type BuildOptions struct {
 	CLIOptions
 
-	Platform string
-	NoBuild  bool
+	Platform      string
+	RegistryCache string
+	ExportCache   bool
+	NoBuild       bool
 }
 
 func (w WorkspaceSource) String() string {

@@ -1,5 +1,11 @@
 package config
 
+import (
+	"strings"
+
+	"github.com/loft-sh/devpod/pkg/types"
+)
+
 const (
 	ContextOptionSSHAddPrivateKeys          = "SSH_ADD_PRIVATE_KEYS"
 	ContextOptionGPGAgentForwarding         = "GPG_AGENT_FORWARDING"
@@ -14,6 +20,7 @@ const (
 	ContextOptionSSHAgentForwarding         = "SSH_AGENT_FORWARDING"
 	ContextOptionSSHConfigPath              = "SSH_CONFIG_PATH"
 	ContextOptionAgentInjectTimeout         = "AGENT_INJECT_TIMEOUT"
+	ContextOptionRegistryCache              = "REGISTRY_CACHE"
 )
 
 var ContextOptions = []ContextOption{
@@ -86,4 +93,37 @@ var ContextOptions = []ContextOption{
 		Description: "Specifies the timeout to inject the agent",
 		Default:     "20",
 	},
+	{
+		Name:        ContextOptionRegistryCache,
+		Description: "Specifies the registry to use as a build cache, e.g. gcr.io/my-project/my-dev-env",
+		Default:     "",
+	},
+}
+
+func MergeContextOptions(contextConfig *ContextConfig, environ []string) {
+	envVars := map[string]string{}
+	for _, v := range environ {
+		t := strings.SplitN(v, "=", 2)
+		if len(t) != 2 {
+			continue
+		}
+		envVars[t[0]] = t[1]
+	}
+
+	for _, o := range ContextOptions {
+		// look up in env
+		envVal, ok := envVars[o.Name]
+		if !ok {
+			continue
+		}
+		// look up in current context options, skip if already exists
+		if _, ok := contextConfig.Options[o.Name]; ok {
+			continue
+		}
+		contextConfig.Options[o.Name] = OptionValue{
+			Value:        envVal,
+			UserProvided: true,
+			Filled:       &[]types.Time{types.Now()}[0],
+		}
+	}
 }

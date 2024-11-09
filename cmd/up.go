@@ -23,9 +23,11 @@ import (
 	"github.com/loft-sh/devpod/pkg/credentials"
 	config2 "github.com/loft-sh/devpod/pkg/devcontainer/config"
 	"github.com/loft-sh/devpod/pkg/devcontainer/sshtunnel"
+	dpFlags "github.com/loft-sh/devpod/pkg/flags"
 	"github.com/loft-sh/devpod/pkg/ide/fleet"
 	"github.com/loft-sh/devpod/pkg/ide/jetbrains"
 	"github.com/loft-sh/devpod/pkg/ide/jupyter"
+	"github.com/loft-sh/devpod/pkg/ide/marimo"
 	"github.com/loft-sh/devpod/pkg/ide/openvscode"
 	"github.com/loft-sh/devpod/pkg/ide/vscode"
 	"github.com/loft-sh/devpod/pkg/loft"
@@ -65,12 +67,12 @@ type UpCmd struct {
 }
 
 // NewUpCmd creates a new up command
-func NewUpCmd(flags *flags.GlobalFlags) *cobra.Command {
+func NewUpCmd(f *flags.GlobalFlags) *cobra.Command {
 	cmd := &UpCmd{
-		GlobalFlags: flags,
+		GlobalFlags: f,
 	}
 	upCmd := &cobra.Command{
-		Use:   "up",
+		Use:   "up [flags] [workspace-path|workspace-name]",
 		Short: "Starts a new workspace",
 		RunE: func(_ *cobra.Command, args []string) error {
 			devPodConfig, err := config.LoadConfig(cmd.Context, cmd.Provider)
@@ -147,7 +149,7 @@ func NewUpCmd(flags *flags.GlobalFlags) *cobra.Command {
 			return cmd.Run(ctx, devPodConfig, client, logger)
 		},
 	}
-
+	dpFlags.SetGitCredentialsFlags(upCmd.Flags(), &cmd.GitCredentialsFlags)
 	upCmd.Flags().BoolVar(&cmd.ConfigureSSH, "configure-ssh", true, "If true will configure the ssh config to include the DevPod workspace")
 	upCmd.Flags().BoolVar(&cmd.GPGAgentForwarding, "gpg-agent-forwarding", false, "If true forward the local gpg-agent to the DevPod workspace")
 	upCmd.Flags().StringVar(&cmd.SSHConfigPath, "ssh-config", "", "The path to the ssh config to modify, if empty will use ~/.ssh/config")
@@ -299,6 +301,15 @@ func (cmd *UpCmd) Run(
 				vscode.FlavorCursor,
 				log,
 			)
+		case string(config.IDEPositron):
+			return vscode.Open(
+				ctx,
+				client.Workspace(),
+				result.SubstitutionContext.ContainerWorkspaceFolder,
+				vscode.Options.GetValue(ideConfig.Options, vscode.OpenNewWindow) == "true",
+				vscode.FlavorPositron,
+				log,
+			)
 		case string(config.IDEOpenVSCode):
 			return startVSCodeInBrowser(
 				cmd.GPGAgentForwarding,
@@ -344,6 +355,28 @@ func (cmd *UpCmd) Run(
 				cmd.GitToken,
 				log,
 			)
+		case string(config.IDEJupyterDesktop):
+			return startJupyterDesktop(
+				cmd.GPGAgentForwarding,
+				ctx,
+				devPodConfig,
+				client,
+				user,
+				ideConfig.Options,
+				cmd.GitUsername,
+				cmd.GitToken,
+				log)
+		case string(config.IDEMarimo):
+			return startMarimoInBrowser(
+				cmd.GPGAgentForwarding,
+				ctx,
+				devPodConfig,
+				client,
+				user,
+				ideConfig.Options,
+				cmd.GitUsername,
+				cmd.GitToken,
+				log)
 		}
 	}
 
@@ -562,6 +595,64 @@ func (cmd *UpCmd) devPodUpMachine(
 	)
 }
 
+func startMarimoInBrowser(
+	forwardGpg bool,
+	ctx context.Context,
+	devPodConfig *config.Config,
+	client client2.BaseWorkspaceClient,
+	user string,
+	ideOptions map[string]config.OptionValue,
+	gitUsername, gitToken string,
+	logger log.Logger,
+) error {
+	if forwardGpg {
+		err := performGpgForwarding(client, logger)
+		if err != nil {
+			return err
+		}
+	}
+
+	// determine port
+	address, port, err := parseAddressAndPort(
+		marimo.Options.GetValue(ideOptions, marimo.BindAddressOption),
+		marimo.DefaultServerPort,
+	)
+	if err != nil {
+		return err
+	}
+
+	// wait until reachable then open browser
+	targetURL := fmt.Sprintf("http://localhost:%d?access_token=%s", port, marimo.Options.GetValue(ideOptions, marimo.AccessToken))
+	if marimo.Options.GetValue(ideOptions, marimo.OpenOption) == "true" {
+		go func() {
+			err = open2.Open(ctx, targetURL, logger)
+			if err != nil {
+				logger.Errorf("error opening marimo: %v", err)
+			}
+
+			logger.Infof(
+				"Successfully started marimo in browser mode. Please keep this terminal open as long as you use Marimo",
+			)
+		}()
+	}
+
+	// start in browser
+	logger.Infof("Starting marimo in browser mode at %s", targetURL)
+	extraPorts := []string{fmt.Sprintf("%s:%d", address, marimo.DefaultServerPort)}
+	return startBrowserTunnel(
+		ctx,
+		devPodConfig,
+		client,
+		user,
+		targetURL,
+		false,
+		extraPorts,
+		gitUsername,
+		gitToken,
+		logger,
+	)
+}
+
 func startJupyterNotebookInBrowser(
 	forwardGpg bool,
 	ctx context.Context,
@@ -605,6 +696,61 @@ func startJupyterNotebookInBrowser(
 
 	// start in browser
 	logger.Infof("Starting jupyter notebook in browser mode at %s", targetURL)
+	extraPorts := []string{fmt.Sprintf("%s:%d", jupyterAddress, jupyter.DefaultServerPort)}
+	return startBrowserTunnel(
+		ctx,
+		devPodConfig,
+		client,
+		user,
+		targetURL,
+		false,
+		extraPorts,
+		gitUsername,
+		gitToken,
+		logger,
+	)
+}
+
+func startJupyterDesktop(
+	forwardGpg bool,
+	ctx context.Context,
+	devPodConfig *config.Config,
+	client client2.BaseWorkspaceClient,
+	user string,
+	ideOptions map[string]config.OptionValue,
+	gitUsername, gitToken string,
+	logger log.Logger,
+) error {
+	if forwardGpg {
+		err := performGpgForwarding(client, logger)
+		if err != nil {
+			return err
+		}
+	}
+
+	// determine port
+	jupyterAddress, jupyterPort, err := parseAddressAndPort(
+		jupyter.Options.GetValue(ideOptions, jupyter.BindAddressOption),
+		jupyter.DefaultServerPort,
+	)
+	if err != nil {
+		return err
+	}
+
+	// wait until reachable then open browser
+	targetURL := fmt.Sprintf("http://localhost:%d/lab", jupyterPort)
+	if jupyter.Options.GetValue(ideOptions, jupyter.OpenOption) == "true" {
+		go func() {
+			err = open2.JLabDesktop(ctx, targetURL, logger)
+			if err != nil {
+				logger.Errorf("error opening jupyter desktop: %v", err)
+			}
+			logger.Infof("Successfully started jupyter desktop")
+		}()
+	}
+
+	// start in browser
+	logger.Infof("Starting jupyter desktop using server %s", targetURL)
 	extraPorts := []string{fmt.Sprintf("%s:%d", jupyterAddress, jupyter.DefaultServerPort)}
 	return startBrowserTunnel(
 		ctx,
@@ -1042,7 +1188,7 @@ func setupLoftPlatformAccess(context, provider, user string, client client2.Base
 	cmd.Stderr = &errb
 	err = cmd.Run()
 	if err != nil {
-		log.Errorf("failure in setting up Loft Platform access: %s", errb.String())
+		log.Debugf("failed to set up platform access in workspace: %s", errb.String())
 	}
 
 	return nil

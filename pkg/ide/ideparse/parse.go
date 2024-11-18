@@ -108,6 +108,12 @@ var AllowedIDEs = []AllowedIDE{
 		Icon:        "https://devpod.sh/assets/webstorm.svg",
 	},
 	{
+		Name:        config.IDEDataSpell,
+		DisplayName: "DataSpell",
+		Options:     jetbrains.DataSpellOptions,
+		Icon:        "https://devpod.sh/assets/dataspell.svg",
+	},
+	{
 		Name:         config.IDEFleet,
 		DisplayName:  "Fleet",
 		Options:      fleet.Options,
@@ -145,6 +151,20 @@ var AllowedIDEs = []AllowedIDE{
 		Experimental: true,
 	},
 	{
+		Name:         config.IDEMarimo,
+		DisplayName:  "Marimo",
+		Options:      vscode.Options,
+		Icon:         "https://devpod.sh/assets/marimo.svg",
+		Experimental: true,
+	},
+	{
+		Name:         config.IDECodium,
+		DisplayName:  "Codium",
+		Options:      vscode.Options,
+		Icon:         "https://devpod.sh/assets/codium.svg",
+		Experimental: true,
+	},
+	{
 		Name:         config.IDEPositron,
 		DisplayName:  "Positron",
 		Options:      vscode.Options,
@@ -152,10 +172,10 @@ var AllowedIDEs = []AllowedIDE{
 		Experimental: true,
 	},
 	{
-		Name:         config.IDEMarimo,
-		DisplayName:  "Marimo",
-		Options:      vscode.Options,
-		Icon:         "https://devpod.sh/assets/marimo.svg",
+		Name:         config.IDEZed,
+		DisplayName:  "Zed",
+		Options:      ide.Options{},
+		Icon:         "https://devpod.sh/assets/zed.svg",
 		Experimental: true,
 	},
 }

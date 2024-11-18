@@ -411,6 +411,8 @@ func (cmd *SetupContainerCmd) installIDE(setupInfo *config.Result, ide *provider
 		return cmd.setupVSCode(setupInfo, ide.Options, vscode.FlavorCursor, log)
 	case string(config2.IDEPositron):
 		return cmd.setupVSCode(setupInfo, ide.Options, vscode.FlavorPositron, log)
+	case string(config2.IDECodium):
+		return cmd.setupVSCode(setupInfo, ide.Options, vscode.FlavorCodium, log)
 	case string(config2.IDEOpenVSCode):
 		return cmd.setupOpenVSCode(setupInfo, ide.Options, log)
 	case string(config2.IDEGoland):
@@ -431,6 +433,8 @@ func (cmd *SetupContainerCmd) installIDE(setupInfo *config.Result, ide *provider
 		return jetbrains.NewRubyMineServer(config.GetRemoteUser(setupInfo), ide.Options, log).Install()
 	case string(config2.IDEWebStorm):
 		return jetbrains.NewWebStormServer(config.GetRemoteUser(setupInfo), ide.Options, log).Install()
+	case string(config2.IDEDataSpell):
+		return jetbrains.NewDataSpellServer(config.GetRemoteUser(setupInfo), ide.Options, log).Install()
 	case string(config2.IDEFleet):
 		return fleet.NewFleetServer(config.GetRemoteUser(setupInfo), ide.Options, log).Install(setupInfo.SubstitutionContext.ContainerWorkspaceFolder)
 	case string(config2.IDEJupyterNotebook):

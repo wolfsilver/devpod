@@ -13,13 +13,22 @@ for os in $BUILD_PLATFORMS; do
             continue
         fi
         echo "[INFO] Building for $os/$arch"
-        CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -ldflags "-s -w" -o test/devpod-cli-$os-$arch
+        if [[ $RACE == "yes" ]]; then
+            echo "Building devpod with race detector"
+            CGO_ENABLED=1 GOOS=$os GOARCH=$arch go build -race -ldflags "-s -w" -o test/devpod-cli-$os-$arch
+        else
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -ldflags "-s -w" -o test/devpod-cli-$os-$arch
+        fi
     done
 done
 
 echo "[INFO] Built binaries for all platforms in test/ directory"
 if [[ -z "${SKIP_INSTALL}" ]]; then
-    go build -o test/devpod && sudo mv test/devpod /usr/local/bin/
+    if command -v sudo &> /dev/null; then
+        go build -o test/devpod && sudo mv test/devpod /usr/local/bin/
+    else 
+        go install .
+    fi
 fi
 
 echo "[INFO] Built devpod binary and moved to /usr/local/bin"
@@ -29,6 +38,11 @@ if [[ $BUILD_PLATFORMS == *"linux"* ]]; then
     cp test/devpod-cli-linux-amd64 desktop/src-tauri/bin/devpod-cli-x86_64-unknown-linux-gnu
     cp test/devpod-cli-linux-arm64 desktop/src-tauri/bin/devpod-cli-aarch64-unknown-linux-gnu
 fi
+
+if [[ $BUILD_PLATFORMS == *"windows"* ]]; then
+    cp test/devpod-cli-windows-amd64 desktop/src-tauri/bin/devpod-cli-x86_64-pc-windows-msvc.exe
+fi
+
 # only copy if darwin is in BUILD_PLATFORMS
 if [[ $BUILD_PLATFORMS == *"darwin"* ]]; then
     cp test/devpod-cli-darwin-amd64 desktop/src-tauri/bin/devpod-cli-x86_64-apple-darwin

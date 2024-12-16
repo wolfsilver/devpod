@@ -1,5 +1,5 @@
 import { Close, Connect, DevpodWordmark, Ellipsis, Folder } from "@/icons"
-import { getDisplayName, useLoginProModal } from "@/lib"
+import { getDisplayName, Result, useLoginProModal } from "@/lib"
 import { TProInstance } from "@/types"
 import { useDeleteProviderModal } from "@/views/Providers"
 import { ArrowUpDownIcon, CheckIcon } from "@chakra-ui/icons"
@@ -23,6 +23,8 @@ import {
   Portal,
   Text,
   VStack,
+  Tooltip,
+  Spinner,
 } from "@chakra-ui/react"
 import { ManagementV1Project } from "@loft-enterprise/client/gen/models/managementV1Project"
 import { ReactNode, useMemo } from "react"
@@ -36,6 +38,8 @@ type THostPickerProps = Readonly<{
   currentProject: ManagementV1Project
   projects: readonly ManagementV1Project[]
   onProjectChange: (newProject: ManagementV1Project) => void
+  onCancelWatch?: () => Promise<Result<undefined>>
+  waitingForCancel: boolean
 }>
 export function ContextSwitcher({
   currentHost,
@@ -43,6 +47,8 @@ export function ContextSwitcher({
   currentProject,
   onProjectChange,
   onHostChange,
+  onCancelWatch,
+  waitingForCancel,
 }: THostPickerProps) {
   const [[rawProInstances]] = useProInstances()
   const proInstances = useMemo(() => {
@@ -86,61 +92,68 @@ export function ContextSwitcher({
           </Button>
         </PopoverTrigger>
         <Portal>
-          <PopoverContent>
+          <PopoverContent minWidth={"25rem"}>
             <PopoverBody p="0">
-              <List>
-                {proInstances.map(({ host, authenticated, image }) => (
-                  <ListItem key={host}>
-                    <PlatformDetails
-                      currentHost={currentHost}
-                      host={host!}
-                      image={image}
-                      authenticated={authenticated}
-                      onConnect={handleConnectPlatform}
-                      onClick={() => onHostChange(host!)}
-                    />
-                    {host === currentHost && (
-                      <VStack
-                        w="full"
-                        align="start"
-                        pb="4"
-                        pt="2"
-                        pl="2"
-                        borderBottomWidth="thin"
-                        borderBottomStyle="solid">
-                        <Heading pl="4" size="xs" color="gray.500" textTransform="uppercase">
-                          Projects
-                        </Heading>
-                        <List w="full">
-                          {projects.map((project) => (
-                            <ListItem key={project.metadata!.name}>
-                              <Button
-                                _hover={{ bgColor: "gray.100" }}
-                                variant="unstyled"
-                                w="full"
-                                display="flex"
-                                justifyContent="start"
-                                alignItems="center"
-                                leftIcon={<Folder boxSize={5} />}
-                                pl="4"
-                                color="gray.600"
-                                fontWeight="normal"
-                                rightIcon={
-                                  project.metadata?.name === currentProject.metadata?.name ? (
-                                    <CheckIcon />
-                                  ) : undefined
-                                }
-                                onClick={() => onProjectChange(project)}>
-                                {getDisplayName(project)}
-                              </Button>
-                            </ListItem>
-                          ))}
-                        </List>
-                      </VStack>
-                    )}
-                  </ListItem>
-                ))}
-              </List>
+              {waitingForCancel ? (
+                <HStack alignItems={"center"} justifyContent={"center"} paddingY={"4"}>
+                  <Spinner />
+                </HStack>
+              ) : (
+                <List>
+                  {proInstances.map(({ host, authenticated, image }) => (
+                    <ListItem key={host}>
+                      <PlatformDetails
+                        currentHost={currentHost}
+                        host={host!}
+                        image={image}
+                        onCancelWatch={onCancelWatch}
+                        authenticated={authenticated}
+                        onConnect={handleConnectPlatform}
+                        onClick={() => onHostChange(host!)}
+                      />
+                      {host === currentHost && (
+                        <VStack
+                          w="full"
+                          align="start"
+                          pb="4"
+                          pt="2"
+                          pl="2"
+                          borderBottomWidth="thin"
+                          borderBottomStyle="solid">
+                          <Heading pl="4" size="xs" color="gray.500" textTransform="uppercase">
+                            Projects
+                          </Heading>
+                          <List w="full">
+                            {projects.map((project) => (
+                              <ListItem key={project.metadata!.name}>
+                                <Button
+                                  _hover={{ bgColor: "gray.100" }}
+                                  variant="unstyled"
+                                  w="full"
+                                  display="flex"
+                                  justifyContent="start"
+                                  alignItems="center"
+                                  leftIcon={<Folder boxSize={5} />}
+                                  pl="4"
+                                  color="gray.600"
+                                  fontWeight="normal"
+                                  rightIcon={
+                                    project.metadata?.name === currentProject.metadata?.name ? (
+                                      <CheckIcon />
+                                    ) : undefined
+                                  }
+                                  onClick={() => onProjectChange(project)}>
+                                  {getDisplayName(project)}
+                                </Button>
+                              </ListItem>
+                            ))}
+                          </List>
+                        </VStack>
+                      )}
+                    </ListItem>
+                  ))}
+                </List>
+              )}
             </PopoverBody>
           </PopoverContent>
         </Portal>
@@ -157,6 +170,7 @@ type TPlatformDetailsProps = Readonly<{
   authenticated?: boolean | null
   onClick: VoidFunction
   onConnect: VoidFunction
+  onCancelWatch?: () => Promise<Result<undefined>>
 }>
 function PlatformDetails({
   host,
@@ -165,13 +179,17 @@ function PlatformDetails({
   authenticated,
   onClick,
   onConnect,
+  onCancelWatch,
 }: TPlatformDetailsProps) {
   const [, { disconnect }] = useProInstances()
   const { modal: deleteProviderModal, open: openDeleteProviderModal } = useDeleteProviderModal(
     host,
     "Pro instance",
     "disconnect",
-    () => disconnect.run({ id: host })
+    async () => {
+      await onCancelWatch?.()
+      disconnect.run({ id: host })
+    }
   )
 
   return (
@@ -188,7 +206,12 @@ function PlatformDetails({
               borderBottomWidth: "thin",
             }
           : {})}>
-        <HStack w="full" justify="space-between">
+        <HStack
+          w="full"
+          overflow="hidden"
+          textOverflow="ellipsis"
+          whiteSpace="nowrap"
+          justify="space-between">
           {image ? (
             typeof image === "string" ? (
               <Image src={image} />
@@ -196,22 +219,37 @@ function PlatformDetails({
               image
             )
           ) : (
-            <Text
-              maxW="50%"
-              fontWeight="semibold"
-              fontSize="sm"
-              overflow="hidden"
-              textOverflow="ellipsis">
-              {host}
-            </Text>
+            <Tooltip maxW={"25rem"} label={host} openDelay={0} closeDelay={0}>
+              <Text
+                maxW="50%"
+                fontWeight="semibold"
+                fontSize="sm"
+                overflow="hidden"
+                textOverflow="ellipsis">
+                {host}
+              </Text>
+            </Tooltip>
           )}
-          <HStack>
+          <HStack maxW="50%">
             {authenticated != null && (
-              <Box boxSize="2" bg={authenticated ? "green.400" : "orange.400"} rounded="full" />
+              <Box
+                flexShrink="0"
+                boxSize="2"
+                bg={authenticated ? "green.400" : "orange.400"}
+                rounded="full"
+              />
             )}
-            <Text fontSize="xs" fontWeight="normal">
-              {host}
-            </Text>
+            <Tooltip maxW={"25rem"} label={host} openDelay={0} closeDelay={0}>
+              <Text
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+                marginTop="1px"
+                fontSize="xs"
+                fontWeight="normal">
+                {host}
+              </Text>
+            </Tooltip>
             {host !== HOST_OSS && (
               <Menu>
                 <MenuButton

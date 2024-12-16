@@ -60,7 +60,7 @@ async fn signal_handler(
     AxumState(server): AxumState<ServerState>,
     Json(payload): Json<SendSignalMessage>,
 ) -> impl IntoResponse {
-    info!("received request to send signa {} to process {}", payload.signal, payload.process_id.to_string());
+    info!("received request to send signal {} to process {}", payload.signal, payload.process_id.to_string());
     #[cfg(not(windows))]
     {
         use nix::sys::signal::{self, kill, Signal};
@@ -77,6 +77,10 @@ async fn signal_handler(
     {
         use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
         use windows::Win32::Foundation::{HANDLE, CloseHandle};
+        use crate::util::kill_child_processes;
+
+        kill_child_processes(payload.process_id as u32);
+
         unsafe {
             let handle: windows::core::Result<HANDLE> = OpenProcess(PROCESS_TERMINATE, false, payload.process_id.try_into().unwrap());
             if handle.is_err() {

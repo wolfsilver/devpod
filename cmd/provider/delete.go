@@ -29,7 +29,7 @@ func NewDeleteCmd(flags *flags.GlobalFlags) *cobra.Command {
 		GlobalFlags: flags,
 	}
 	deleteCmd := &cobra.Command{
-		Use:   "delete",
+		Use:   "delete [name]",
 		Short: "Delete a provider",
 		RunE: func(_ *cobra.Command, args []string) error {
 			return cmd.Run(context.Background(), args)
@@ -80,7 +80,7 @@ func (cmd *DeleteCmd) Run(ctx context.Context, args []string) error {
 
 func DeleteProvider(ctx context.Context, devPodConfig *config.Config, provider string, ignoreNotFound bool, cleanup bool, log logpkg.Logger) error {
 	// check if there are workspaces that still use this provider
-	workspaces, err := workspace.List(ctx, devPodConfig, false, log)
+	workspaces, err := workspace.List(ctx, devPodConfig, true, log)
 	if err != nil {
 		return err
 	}

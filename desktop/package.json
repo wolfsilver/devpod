@@ -15,7 +15,8 @@
     "desktop:build": "tauri build",
     "format:check": "prettier --check .",
     "format:fix": "prettier --write .",
-    "types:check": "tsc -p ./tsconfig.json --noEmit"
+    "types:check": "tsc -p ./tsconfig.json --noEmit",
+    "lint:ci": "eslint . --ext '.ts,.tsx'"
   },
   "dependencies": {
     "@chakra-ui/icons": "2.1.1",
@@ -23,7 +24,7 @@
     "@emotion/react": "11.11.1",
     "@emotion/styled": "11.11.0",
     "@headlessui/react": "1.7.17",
-    "@loft-enterprise/client": "https://github.com/loft-sh/loft-javascript-client#v4.1.0-alpha.16",
+    "@loft-enterprise/client": "https://github.com/loft-sh/loft-javascript-client#v4.2.0-alpha.3",
     "@tanstack/react-query": "4.36.1",
     "@tanstack/react-query-devtools": "4.36.1",
     "@tanstack/react-table": "8.10.7",
@@ -38,6 +39,8 @@
     "@tauri-apps/plugin-store": "2.1.0",
     "@tauri-apps/plugin-updater": "2.0.0",
     "@types/lodash.debounce": "4.0.9",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0",
     "compare-versions": "6.1.1",
     "dayjs": "1.11.10",
     "framer-motion": "10.16.9",
@@ -52,9 +55,7 @@
     "react-router": "6.20.0",
     "react-router-dom": "6.20.0",
     "tauri-plugin-store-api": "https://github.com/tauri-apps/tauri-plugin-store#v1",
-    "uuid": "9.0.1",
-    "xterm": "5.3.0",
-    "xterm-addon-fit": "0.7.0"
+    "uuid": "9.0.1"
   },
   "devDependencies": {
     "@tanstack/eslint-plugin-query": "4.36.1",
@@ -77,5 +78,6 @@
   },
   "resolutions": {
     "lodash": "4.17.21"
-  }
+  },
+  "packageManager": "yarn@1.22.19"
 }

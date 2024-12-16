@@ -41,7 +41,7 @@ const Link = defineStyleConfig({
 const FormError = defineStyleConfig({
   baseStyle: {
     text: {
-      userSelect: "auto",
+      userSelect: "text",
       cursor: "text",
     },
   },
@@ -52,7 +52,7 @@ const FormError = defineStyleConfig({
 Tooltip.defaultProps = { ...Tooltip.defaultProps, placement: "top" }
 
 const getInitialColorMode = (defaultColor: ColorMode = "light"): ColorMode => {
-  return (localStorage.getItem("chakra-ui-color-mode") as ColorMode) ?? defaultColor
+  return (localStorage.getItem("chakra-ui-color-mode") as ColorMode | undefined) ?? defaultColor
 }
 
 export const theme = extendTheme({
@@ -71,10 +71,10 @@ export const theme = extendTheme({
           cursor: "default",
         },
         td: {
-          userSelect: "auto",
+          userSelect: "text",
         },
         code: {
-          userSelect: "auto",
+          userSelect: "text",
           cursor: "text",
         },
         "input::placeholder": {
@@ -91,6 +91,15 @@ export const theme = extendTheme({
       600: "#AA40EE",
       800: "#8E00EB",
       900: "#40006A",
+    },
+    text: {
+      secondary: "#465E75",
+      tertiary: "#5C7997",
+    },
+    divider: {
+      main: "#B0C3D6",
+      light: "#DCE5EE",
+      dark: "#465E75",
     },
     background: {
       darkest: "rgb(16, 18, 20)",

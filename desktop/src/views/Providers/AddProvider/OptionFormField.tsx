@@ -98,7 +98,11 @@ export function OptionFormField({
 
     switch (type) {
       case "boolean":
-        return <Checkbox {...props}>{displayName}</Checkbox>
+        return (
+          <Checkbox {...props} defaultChecked={props.defaultValue === "true"}>
+            {displayName}
+          </Checkbox>
+        )
       case "number":
         return (
           <Input
@@ -173,7 +177,7 @@ export function OptionFormField({
       {exists(optionError) ? (
         <FormErrorMessage>{optionError.message?.toString() ?? "Error"}</FormErrorMessage>
       ) : (
-        exists(description) && <FormHelperText userSelect="auto">{description}</FormHelperText>
+        exists(description) && <FormHelperText userSelect="text">{description}</FormHelperText>
       )}
     </FormControl>
   )

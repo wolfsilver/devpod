@@ -1,6 +1,6 @@
 import { BottomActionBar, BottomActionBarError, Form, useStreamingTerminal } from "@/components"
-import { useProInstanceManager, useProInstances } from "@/contexts"
-import { exists, useFormErrors } from "@/lib"
+import { useProInstanceManager, useProInstances, useProviders } from "@/contexts"
+import { canHealthCheck, exists, useFormErrors } from "@/lib"
 import { Routes } from "@/routes"
 import {
   Box,
@@ -30,6 +30,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { SubmitHandler, useForm } from "react-hook-form"
 import { useNavigate } from "react-router"
 import { ConfigureProviderOptionsForm, useSetupProvider } from "@/views/Providers"
+import { To } from "react-router-dom"
 
 type TFormValues = {
   [FieldName.PRO_HOST]: string
@@ -52,6 +53,7 @@ export function useLoginProModal() {
   >({})
   const { terminal, connectStream, clear: clearTerminal } = useStreamingTerminal({ fontSize: "sm" })
   const [[proInstances], { login, disconnect }] = useProInstances()
+  const [[providers]] = useProviders()
   const { isOpen, onClose, onOpen } = useDisclosure()
   const { handleSubmit, formState, register, reset, setValue } = useForm<TFormValues>({
     mode: "onBlur",
@@ -140,13 +142,30 @@ export function useLoginProModal() {
     resetModal()
 
     const proInstanceID = proInstances?.find((pro) => pro.provider === state.providerID)?.host
-    if (!proInstanceID) return
+    if (!proInstanceID || !state.providerID) return
+
+    const provider = providers?.[state.providerID]
+
+    let route: To
+
+    // We only redirect to the new experience if the provider supports it.
+    // Support can be determined via canHealthCheck.
+    if (provider && canHealthCheck(provider.config)) {
+      route = Routes.toProInstance(proInstanceID)
+    } else {
+      route = Routes.toWorkspaceCreate({
+        workspaceID: null,
+        ide: null,
+        rawSource: null,
+        providerID: state.providerID,
+      })
+    }
 
     // workaround for layout shift after closing modal, no clue why
     setTimeout(() => {
-      navigate(Routes.toProInstance(proInstanceID))
+      navigate(route)
     }, 0)
-  }, [completeConfigureProvider, navigate, proInstances, resetModal, state.providerID])
+  }, [completeConfigureProvider, navigate, providers, proInstances, resetModal, state.providerID])
 
   const modal = useMemo(() => {
     return (

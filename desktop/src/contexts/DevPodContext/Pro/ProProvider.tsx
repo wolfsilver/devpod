@@ -1,6 +1,6 @@
 import { ProClient, client as globalClient } from "@/client"
 import { ToolbarActions, ToolbarTitle } from "@/components"
-import { Annotations } from "@/lib"
+import { Annotations, Result } from "@/lib"
 import { Routes } from "@/routes"
 import { Text } from "@chakra-ui/react"
 import { ManagementV1Project } from "@loft-enterprise/client/gen/models/managementV1Project"
@@ -47,13 +47,25 @@ export function ProProvider({ host, children }: { host: string; children: ReactN
     return projectsQuery.data?.[0]
   }, [projectsQuery, selectedProject])
 
+  const [cancelWatch, setCancelWatch] = useState<
+    { fn: () => Promise<Result<undefined>> } | undefined
+  >(undefined)
+
+  const [waitingForCancel, setWaitingForCancel] = useState<boolean>(false)
+
   useEffect(() => {
     if (!currentProject?.metadata?.name) {
       return
     }
     setIsLoadingWorkspaces(true)
 
-    return client.watchWorkspaces(currentProject.metadata.name, (workspaces) => {
+    let canceled = false
+
+    const toCancel = client.watchWorkspaces(currentProject.metadata.name, (workspaces) => {
+      if (canceled) {
+        return
+      }
+
       // sort by last activity (newest > oldest)
       const sorted = workspaces.slice().sort((a, b) => {
         const lastActivityA = a.metadata?.annotations?.[Annotations.SleepModeLastActivity]
@@ -70,6 +82,20 @@ export function ProProvider({ host, children }: { host: string; children: ReactN
         setIsLoadingWorkspaces(false)
       }, 1_000)
     })
+
+    const canceler = () => {
+      canceled = true
+      setCancelWatch(undefined)
+      setWaitingForCancel(true)
+
+      return toCancel().finally(() => setWaitingForCancel(false))
+    }
+
+    setCancelWatch({ fn: canceler })
+
+    return () => {
+      canceler()
+    }
   }, [client, store, currentProject])
 
   const handleProjectChanged = (newProject: ManagementV1Project) => {
@@ -112,6 +138,8 @@ export function ProProvider({ host, children }: { host: string; children: ReactN
           projects={projectsQuery.data ?? []}
           currentProject={currentProject!}
           onProjectChange={handleProjectChanged}
+          onCancelWatch={cancelWatch?.fn}
+          waitingForCancel={waitingForCancel}
         />
       </ToolbarActions>
       {children}

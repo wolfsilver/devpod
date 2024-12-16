@@ -5,6 +5,7 @@ import {
   useProjectClusters,
   useTemplates,
   useWorkspace,
+  useWorkspaceActions,
 } from "@/contexts"
 import { Clock, Folder, Git, Globe, Image, Status } from "@/icons"
 import {
@@ -27,6 +28,7 @@ import { BackToWorkspaces } from "../BackToWorkspaces"
 import { WorkspaceTabs } from "./Tabs"
 import { WorkspaceCardHeader } from "./WorkspaceCardHeader"
 import { WorkspaceStatus } from "./WorkspaceStatus"
+import { useStoreTroubleshoot } from "@/lib/useStoreTroubleshoot"
 
 export function Workspace() {
   const params = useParams<{ workspace: string }>()
@@ -37,6 +39,7 @@ export function Workspace() {
   const workspace = useWorkspace<ProWorkspaceInstance>(params.workspace)
   const instance = workspace.data
   const instanceDisplayName = getDisplayName(instance)
+  const workspaceActions = useWorkspaceActions(instance?.id)
 
   const { modal: stopModal, open: openStopModal } = useStopWorkspaceModal(
     useCallback(
@@ -100,6 +103,17 @@ export function Workspace() {
     }
   }, [host, navigate, workspace])
 
+  const { store: storeTroubleshoot } = useStoreTroubleshoot()
+
+  const handleTroubleshootClicked = useCallback(() => {
+    if (workspace.data && workspaceActions) {
+      storeTroubleshoot({
+        workspace: workspace.data,
+        workspaceActions: workspaceActions,
+      })
+    }
+  }, [storeTroubleshoot, workspace.data, workspaceActions])
+
   if (!instance) {
     return (
       <VStack align="start" gap="4">
@@ -114,7 +128,6 @@ export function Workspace() {
       </VStack>
     )
   }
-
   const canStop =
     instance.status?.lastWorkspaceStatus != "Busy" &&
     instance.status?.lastWorkspaceStatus != "Stopped"
@@ -143,6 +156,7 @@ export function Workspace() {
                 onRebuildClicked={openRebuildModal}
                 onResetClicked={openResetModal}
                 onStopClicked={!canStop ? openStopModal : workspace.stop}
+                onTroubleshootClicked={handleTroubleshootClicked}
               />
             </WorkspaceCardHeader>
           </Box>

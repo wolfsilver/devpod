@@ -15,7 +15,8 @@ use tokio::fs::File;
 use ts_rs::TS;
 
 const UPDATE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 10);
-const RELEASES_URL: &str = "https://api.github.com/repos/loft-sh/devpod/releases";
+const RELEASES_URL: &str = "https://update-server.devpod.sh/releases";
+const FALLBACK_RELEASES_URL: &str = "https://api.github.com/repos/loft-sh/devpod/releases";
 
 #[derive(Error, Debug)]
 pub enum UpdateError {
@@ -136,10 +137,7 @@ pub async fn check_updates(app_handle: AppHandle) -> Result<bool, UpdateError> {
     match updater.check().await {
         Ok(update) => {
             let update_available = update.is_some();
-            debug!(
-                "Update check completed, update available: {}",
-                update_available
-            );
+            info!("Update check completed, result: {}", update_available);
 
             return Ok(update_available);
         }
@@ -164,86 +162,89 @@ impl<'a> UpdateHelper<'a> {
     }
 
     pub async fn poll(&self) {
+        #[cfg(debug_assertions)] // disable during development
         {
-            #[cfg(debug_assertions)] // disable during development
-            {
-                return
+            return;
+        }
+
+        loop {
+            // check if we have updated the app recently
+            // if so, show changelog in app
+
+            let app_handle = self.app_handle.clone();
+            let updater = app_handle.updater();
+            if updater.is_err() {
+                error!("Failed to get updater");
+
+                continue;
             }
+            info!("Attempting to check update");
+            if let Ok(update) = updater.unwrap().check().await {
+                match update {
+                    Some(..) => info!("update available"),
+                    None => info!("no update available"),
+                };
 
-            loop {
-                // check if we have updated the app recently
-                // if so, show changelog in app
+                if let Some(update) = update {
+                    let state = self.app_handle.state::<AppState>();
+                    let update_installed_state = *state.update_installed.lock().unwrap();
+                    // prevent ourselves from installing the same update multiple times
+                    if update_installed_state {
+                        return;
+                    }
 
-                let app_handle = self.app_handle.clone();
-                let updater = app_handle.updater();
-                if updater.is_err() {
-                    error!("Failed to get updater");
+                    let new_version = update.version.as_str();
+                    let update_helper = UpdateHelper::new(&self.app_handle);
+                    if let Err(e) = update_helper.update_app_releases(new_version).await {
+                        error!("Failed to update app releases: {}", e);
+                    }
 
-                    continue;
-                }
-                if let Ok(update) = updater.unwrap().check().await {
-                    if let Some(update) = update {
+                    if Settings::auto_update_enabled(&self.app_handle) {
+                        let on_chunk = |_, _| {};
+                        let on_download_fininshed = || {
+                            info!("Download for version {} finished", new_version);
+                        };
+                        info!(
+                            "Update available, current: {}, new: {}",
+                            update.current_version, new_version,
+                        );
+                        info!("Starting to download");
+                        if let Err(err) = update
+                            .download_and_install(on_chunk, on_download_fininshed)
+                            .await
+                        {
+                            error!("Failed to download and install update: {}", err);
+                        }
+
+                        let window_helper = WindowHelper::new(self.app_handle.clone());
+                        let _ = window_helper.new_update_ready_window();
+
                         let state = self.app_handle.state::<AppState>();
-                        let update_installed_state = *state.update_installed.lock().unwrap();
-                        // prevent ourselves from installing the same update multiple times
-                        if update_installed_state {
-                            return;
-                        }
+                        let mut pending_update_state = state.pending_update.lock().unwrap();
+                        *pending_update_state = None;
 
-                        let new_version = update.version.as_str();
-                        let update_helper = UpdateHelper::new(&self.app_handle);
-                        if let Err(e) = update_helper.update_app_releases(new_version).await {
-                            error!("Failed to update app releases: {}", e);
-                        }
+                        let mut update_installed_state = state.update_installed.lock().unwrap();
+                        *update_installed_state = true;
+                    } else {
+                        match self.update_app_releases(new_version).await {
+                            Ok(release) => {
+                                if let Err(err) = self.notify_update_available(&release).await {
+                                    warn!("Failed to send update notification: {}", err);
+                                }
 
-                        if Settings::auto_update_enabled(&self.app_handle) {
-                            let on_chunk = |_, _| {};
-                            let on_download_fininshed = || {
-                                info!("Download for version {} finished", new_version);
-                            };
-                            info!(
-                                "Update available, current: {}, new: {}",
-                                update.current_version, new_version,
-                            );
-                            info!("Starting to download");
-                            if let Err(err) = update
-                                .download_and_install(on_chunk, on_download_fininshed)
-                                .await
-                            {
-                                error!("Failed to download and install update: {}", err);
+                                // display update available in the UI
+                                let state = self.app_handle.state::<AppState>();
+                                let mut pending_update_state = state.pending_update.lock().unwrap();
+                                *pending_update_state = Some(release);
                             }
-
-                            let window_helper = WindowHelper::new(self.app_handle.clone());
-                            let _ = window_helper.new_update_ready_window();
-
-                            let state = self.app_handle.state::<AppState>();
-                            let mut pending_update_state = state.pending_update.lock().unwrap();
-                            *pending_update_state = None;
-
-                            let mut update_installed_state = state.update_installed.lock().unwrap();
-                            *update_installed_state = true;
-                        } else {
-                            match self.update_app_releases(new_version).await {
-                                Ok(release) => {
-                                    if let Err(err) = self.notify_update_available(&release).await {
-                                        warn!("Failed to send update notification: {}", err);
-                                    }
-
-                                    // display update available in the UI
-                                    let state = self.app_handle.state::<AppState>();
-                                    let mut pending_update_state =
-                                        state.pending_update.lock().unwrap();
-                                    *pending_update_state = Some(release);
-                                }
-                                Err(e) => {
-                                    error!("Failed to update app releases: {}", e);
-                                }
+                            Err(e) => {
+                                error!("Failed to update app releases: {}", e);
                             }
                         }
                     }
                 }
-                tokio::time::sleep(UPDATE_POLL_INTERVAL).await;
-            };
+            }
+            tokio::time::sleep(UPDATE_POLL_INTERVAL).await;
         }
     }
 
@@ -265,23 +266,47 @@ impl<'a> UpdateHelper<'a> {
             .clone())
     }
 
-    pub async fn fetch_releases(&self) -> anyhow::Result<Releases> {
-        let per_page = 50;
-        let page = 1;
-
+    pub async fn fetch_releases_from_url(&self, url: &str) -> anyhow::Result<Vec<Release>> {
         let client = Client::builder().user_agent("loft-sh/devpod").build()?;
-        let request = client
-            .request(Method::GET, RELEASES_URL)
-            .query(&[("per_page", per_page), ("page", page)])
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
 
-        let releases = request
+        let response = client
+            .request(Method::GET, url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
             .send()
-            .await?
+            .await
+            .with_context(|| format!("Fetch releases from {}", url))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "Status code {} from {}",
+                response.status(),
+                url
+            ));
+        }
+
+        let releases = response
             .json::<Vec<Release>>()
             .await
-            .with_context(|| format!("Fetch releases from {}", RELEASES_URL))?;
+            .with_context(|| format!("Parse JSON from {}", url))?;
+
+        Ok(releases)
+    }
+
+    pub async fn fetch_releases(&self) -> anyhow::Result<Releases> {
+        debug!("Querying releases from update server: {}", RELEASES_URL);
+        let releases = match self.fetch_releases_from_url(RELEASES_URL).await {
+            Ok(releases) => releases,
+            Err(_) => {
+                debug!("Query from main update server failed. Querying from fallback URL: {}", FALLBACK_RELEASES_URL);
+                match self.fetch_releases_from_url(FALLBACK_RELEASES_URL).await {
+                    Ok(releases) => releases,
+                    Err(e2) => {
+                        return Err(e2).context("No endpoint delivered updates.");
+                    }
+                }
+            }
+        };
 
         let releases = &releases
             .into_iter()

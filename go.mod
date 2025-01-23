@@ -26,10 +26,9 @@ require (
 	github.com/loft-sh/api/v4 v4.0.0-alpha.6.0.20241129074910-a24d4104d586
 	github.com/loft-sh/log v0.0.0-20240219160058-26d83ffb46ac
 	github.com/loft-sh/programming-language-detection v0.0.5
-	github.com/loft-sh/ssh v0.0.4
+	github.com/loft-sh/ssh v0.0.5
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d
-	github.com/mitchellh/go-homedir v1.1.0
 	github.com/moby/buildkit v0.18.0
 	github.com/onsi/ginkgo/v2 v2.20.2
 	github.com/onsi/gomega v1.34.2
@@ -155,10 +154,12 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
 	github.com/loft-sh/admin-apis v0.0.0-20241127134028-9cfb6b23ec44 // indirect
+	github.com/loft-sh/analytics-client v0.0.0-20240219162240-2f4c64b2494e // indirect
 	github.com/loft-sh/apiserver v0.0.0-20241008120650-f17d504a4d0d // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
+	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect

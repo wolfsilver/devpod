@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM mcr.microsoft.com/devcontainers/go:1.22-bullseye
 
 ARG TARGETOS
@@ -25,6 +26,5 @@ RUN \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app /app
-COPY files /files
 
 RUN echo hello

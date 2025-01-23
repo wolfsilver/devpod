@@ -2,6 +2,7 @@ package vscode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -13,15 +14,18 @@ import (
 )
 
 func Open(ctx context.Context, workspace, folder string, newWindow bool, flavor Flavor, log log.Logger) error {
-	log.Infof("Starting %s...", flavor)
-	err := openViaCLI(ctx, workspace, folder, newWindow, flavor, log)
-	if err != nil {
-		log.Debugf("Error opening %s via cli: %v", flavor, err)
-	} else {
+	log.Infof("Starting %s...", flavor.DisplayName())
+	cliErr := openViaCLI(ctx, workspace, folder, newWindow, flavor, log)
+	if cliErr == nil {
 		return nil
 	}
 
-	return openViaBrowser(workspace, folder, newWindow, flavor, log)
+	browserErr := openViaBrowser(workspace, folder, newWindow, flavor, log)
+	if browserErr == nil {
+		return nil
+	}
+
+	return errors.Join(cliErr, browserErr)
 }
 
 func openViaBrowser(workspace, folder string, newWindow bool, flavor Flavor, log log.Logger) error {
@@ -105,7 +109,7 @@ func openViaCLI(ctx context.Context, workspace, folder string, newWindow bool, f
 	// Needs to be separated by `=` because of windows
 	folderUriArg := fmt.Sprintf("--folder-uri=vscode-remote://ssh-remote+%s.devpod/%s", workspace, folder)
 	args = append(args, folderUriArg)
-	log.Debugf("Run %s command %s %s", flavor, codePath, strings.Join(args, " "))
+	log.Debugf("Run %s command %s %s", flavor.DisplayName(), codePath, strings.Join(args, " "))
 	out, err = exec.CommandContext(ctx, codePath, args...).CombinedOutput()
 	if err != nil {
 		return command.WrapCommandError(out, err)

@@ -124,7 +124,7 @@ func (r *runner) extendImage(
 	}
 
 	// get extend image build info
-	extendedBuildInfo, err := feature.GetExtendedBuildInfo(substitutionContext, imageBuildInfo.Metadata, imageBuildInfo.User, imageBase, parsedConfig, r.Log, options.ForceBuild)
+	extendedBuildInfo, err := feature.GetExtendedBuildInfo(substitutionContext, imageBuildInfo, imageBase, parsedConfig, r.Log, options.ForceBuild)
 	if err != nil {
 		return nil, errors.Wrap(err, "get extended build info")
 	}
@@ -182,7 +182,7 @@ func (r *runner) buildAndExtendImage(
 	}
 
 	// get extend image build info
-	extendedBuildInfo, err := feature.GetExtendedBuildInfo(substitutionContext, imageBuildInfo.Metadata, imageBuildInfo.User, imageBase, parsedConfig, r.Log, options.ForceBuild)
+	extendedBuildInfo, err := feature.GetExtendedBuildInfo(substitutionContext, imageBuildInfo, imageBase, parsedConfig, r.Log, options.ForceBuild)
 	if err != nil {
 		return nil, errors.Wrap(err, "get extended build info")
 	}
@@ -307,7 +307,7 @@ func (r *runner) buildImage(
 		r.Log.Debugf("Try to find prebuild image %s in repositories %s", prebuildHash, strings.Join(options.PrebuildRepositories, ","))
 		for _, prebuildRepo := range options.PrebuildRepositories {
 			prebuildImage := prebuildRepo + ":" + prebuildHash
-			img, err := image.GetImage(ctx, prebuildImage)
+			img, err := image.GetImageForArch(ctx, prebuildImage, targetArch)
 			if err == nil && img != nil {
 				// prebuild image found
 				r.Log.Infof("Found existing prebuilt image %s", prebuildImage)

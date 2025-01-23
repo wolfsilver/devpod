@@ -15,8 +15,8 @@ import (
 	"github.com/loft-sh/devpod/pkg/git"
 	"github.com/loft-sh/devpod/pkg/gitcredentials"
 	provider2 "github.com/loft-sh/devpod/pkg/provider"
+	"github.com/loft-sh/devpod/pkg/util"
 	"github.com/loft-sh/log"
-	"github.com/mitchellh/go-homedir"
 	"github.com/moby/patternmatcher/ignorefile"
 )
 
@@ -50,7 +50,7 @@ func findDir(agentFolder string, validate func(path string) bool) string {
 	}
 
 	// check home folder first
-	homeDir, _ := homedir.Dir()
+	homeDir, _ := util.UserHomeDir()
 	if homeDir != "" {
 		homeDir = filepath.Join(homeDir, ".devpod", "agent")
 		if validate(homeDir) {
@@ -295,10 +295,14 @@ func CloneRepositoryForWorkspace(
 	}
 
 	// run git command
-	cloner := git.NewCloner(options.GitCloneStrategy)
+	cloner := git.NewClonerWithOpts(getGitOptions(options)...)
 	gitInfo := git.NewGitInfo(source.GitRepository, source.GitBranch, source.GitCommit, source.GitPRReference, source.GitSubPath)
 	err := git.CloneRepositoryWithEnv(ctx, gitInfo, extraEnv, workspaceDir, helper, cloner, log)
 	if err != nil {
+		// cleanup workspace dir if clone failed, otherwise we won't try to clone again when rebuilding this workspace
+		if cleanupErr := cleanupWorkspaceDir(workspaceDir); cleanupErr != nil {
+			return fmt.Errorf("clone repository: %w, cleanup workspace: %w", err, cleanupErr)
+		}
 		return fmt.Errorf("clone repository: %w", err)
 	}
 
@@ -321,6 +325,18 @@ func CloneRepositoryForWorkspace(
 	log.Debug("Ignore files from .devpodignore ", excludes)
 
 	return nil
+}
+
+func getGitOptions(options provider2.CLIOptions) []git.Option {
+	gitOpts := []git.Option{git.WithCloneStrategy(options.GitCloneStrategy)}
+	if options.GitCloneRecursiveSubmodules {
+		gitOpts = append(gitOpts, git.WithRecursiveSubmodules())
+	}
+	return gitOpts
+}
+
+func cleanupWorkspaceDir(workspaceDir string) error {
+	return os.RemoveAll(workspaceDir)
 }
 
 func setupSSHKey(key string, agentPath string) ([]string, func(), error) {

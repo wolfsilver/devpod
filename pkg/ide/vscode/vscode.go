@@ -13,8 +13,8 @@ import (
 	"github.com/loft-sh/devpod/pkg/config"
 	copy2 "github.com/loft-sh/devpod/pkg/copy"
 	"github.com/loft-sh/devpod/pkg/ide"
+	"github.com/loft-sh/devpod/pkg/util"
 	"github.com/loft-sh/log"
-	"github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -32,6 +32,23 @@ const (
 	FlavorPositron Flavor = "positron"
 	FlavorCodium   Flavor = "codium"
 )
+
+func (f Flavor) DisplayName() string {
+	switch f {
+	case FlavorStable:
+		return "VSCode"
+	case FlavorInsiders:
+		return "VSCode Insiders"
+	case FlavorCursor:
+		return "Cursor"
+	case FlavorPositron:
+		return "positron"
+	case FlavorCodium:
+		return "VSCodium"
+	default:
+		return "VSCode"
+	}
+}
 
 var Options = ide.Options{
 	OpenNewWindow: {
@@ -421,7 +438,7 @@ func prepareServerLocation(userName string, create bool, flavor Flavor) (string,
 	if userName != "" {
 		homeFolder, err = command.GetHome(userName)
 	} else {
-		homeFolder, err = homedir.Dir()
+		homeFolder, err = util.UserHomeDir()
 	}
 	if err != nil {
 		return "", err

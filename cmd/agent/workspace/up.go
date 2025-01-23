@@ -24,6 +24,7 @@ import (
 	"github.com/loft-sh/devpod/pkg/dockercredentials"
 	"github.com/loft-sh/devpod/pkg/extract"
 	provider2 "github.com/loft-sh/devpod/pkg/provider"
+	"github.com/loft-sh/devpod/pkg/util"
 	"github.com/loft-sh/devpod/scripts"
 	"github.com/loft-sh/log"
 	"github.com/pkg/errors"
@@ -281,7 +282,7 @@ func prepareWorkspace(ctx context.Context, workspaceInfo *provider2.AgentWorkspa
 			}
 		}
 
-		if workspaceInfo.CLIOptions.Recreate && !workspaceInfo.CLIOptions.Reset {
+		if workspaceInfo.CLIOptions.Recreate && !workspaceInfo.CLIOptions.Reset && exists {
 			log.Info("Rebuiling without resetting a git based workspace, keeping old content folder")
 			return nil
 		}
@@ -304,11 +305,11 @@ func prepareWorkspace(ctx context.Context, workspaceInfo *provider2.AgentWorkspa
 	if workspaceInfo.Workspace.Source.LocalFolder != "" {
 		// if we're not sending this to a remote machine, we're already done
 		if workspaceInfo.ContentFolder == workspaceInfo.Workspace.Source.LocalFolder {
-			log.Debugf("Local folder with local provider; skip downloading")
+			log.Debugf("Local folder %s with local provider; skip downloading", workspaceInfo.ContentFolder)
 			return nil
 		}
 
-		log.Debugf("Download Local Folder")
+		log.Debugf("Download Local Folder %s", workspaceInfo.ContentFolder)
 		return downloadLocalFolder(ctx, workspaceInfo.ContentFolder, client, log)
 	}
 
@@ -451,7 +452,7 @@ func configureDockerDaemon(ctx context.Context, log log.Logger) (err error) {
 		}
 	}`)
 	// Check rootless docker
-	homeDir, err := os.UserHomeDir()
+	homeDir, err := util.UserHomeDir()
 	if err != nil {
 		return err
 	}

@@ -121,6 +121,9 @@ type ProviderAgentConfig struct {
 
 	// Custom holds custom driver specific configuration
 	Custom ProviderCustomDriverConfig `json:"custom,omitempty"`
+
+	// Kubernetes holds kubernetes specific configuration
+	Kubernetes ProviderKubernetesDriverConfig `json:"kubernetes,omitempty"`
 }
 
 type ProviderDockerlessOptions struct {
@@ -145,8 +148,9 @@ func (a ProviderAgentConfig) IsDockerDriver() bool {
 }
 
 const (
-	DockerDriver = "docker"
-	CustomDriver = "custom"
+	DockerDriver     = "docker"
+	KubernetesDriver = "kubernetes"
+	CustomDriver     = "custom"
 )
 
 type ProviderCustomDriverConfig struct {
@@ -190,6 +194,34 @@ type ProviderDockerDriverConfig struct {
 
 	// Environment variables to set when running docker commands
 	Env map[string]string `json:"env,omitempty"`
+}
+
+type ProviderKubernetesDriverConfig struct {
+	KubernetesContext   string `json:"kubernetesContext,omitempty"`
+	KubernetesConfig    string `json:"kubernetesConfig,omitempty"`
+	KubernetesNamespace string `json:"kubernetesNamespace,omitempty"`
+	PodTimeout          string `json:"podTimeout,omitempty"`
+
+	KubernetesPullSecretsEnabled string `json:"kubernetesPullSecretsEnabled,omitempty"`
+	CreateNamespace              string `json:"createNamespace,omitempty"`
+	ClusterRole                  string `json:"clusterRole,omitempty"`
+	ServiceAccount               string `json:"serviceAccount,omitempty"`
+
+	Architecture      string `json:"architecture,omitempty"`
+	InactivityTimeout string `json:"inactivityTimeout,omitempty"`
+	StorageClass      string `json:"storageClass,omitempty"`
+
+	DiskSize             string `json:"diskSize,omitempty"`
+	PvcAccessMode        string `json:"pvcAccessMode,omitempty"`
+	PvcAnnotations       string `json:"pvcAnnotations,omitempty"`
+	NodeSelector         string `json:"nodeSelector,omitempty"`
+	Resources            string `json:"resources,omitempty"`
+	WorkspaceVolumeMount string `json:"workspaceVolumeMount,omitempty"`
+
+	PodManifestTemplate string `json:"podManifestTemplate,omitempty"`
+	Labels              string `json:"labels,omitempty"`
+
+	StrictSecurity string `json:"strictSecurity,omitempty"`
 }
 
 type ProviderAgentConfigExec struct {
@@ -242,6 +274,9 @@ type ProviderCommands struct {
 
 	// Proxy proxies commands
 	Proxy *ProxyCommands `json:"proxy,omitempty"`
+
+	// Daemon commands
+	Daemon *DaemonCommands `json:"daemon,omitempty"`
 }
 
 type ProxyCommands struct {
@@ -319,6 +354,13 @@ type UpdateProxyCommands struct {
 	Workspace types.StrArray `json:"workspace,omitempty"`
 }
 
+type DaemonCommands struct {
+	// Start starts the daemon
+	Start types.StrArray `json:"start,omitempty"`
+	// Status gets the daemon status
+	Status types.StrArray `json:"status,omitempty"`
+}
+
 type SubOptions struct {
 	Options map[string]*types.Option `json:"options,omitempty"`
 }
@@ -333,4 +375,8 @@ func (c *ProviderConfig) IsProxyProvider() bool {
 
 func (c *ProviderConfig) HasHealthCheck() bool {
 	return c.Exec.Proxy != nil && len(c.Exec.Proxy.Health) > 0
+}
+
+func (c *ProviderConfig) IsDaemonProvider() bool {
+	return c.Exec.Daemon != nil
 }

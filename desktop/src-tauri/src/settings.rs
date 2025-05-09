@@ -5,6 +5,7 @@ use log::error;
 use serde::Serialize;
 use tauri_plugin_store::StoreExt;
 use ts_rs::TS;
+use std::env;
 
 const SETTINGS_FILE_NAME: &str = ".settings.json";
 
@@ -37,16 +38,14 @@ pub struct Settings {
     experimental_vscode_insiders: bool,
     #[serde(rename = "experimental_cursor")]
     experimental_cursor: bool,
-    #[serde(rename = "experimental_jupyterDesktop")]
-    experimental_jupyter_desktop: bool,
-    #[serde(rename = "experimental_marimo")]
-    experimental_marimo: bool,
     #[serde(rename = "experimental_codium")]
     experimental_codium: bool,
     #[serde(rename = "experimental_zed")]
     experimental_zed: bool,
     #[serde(rename = "experimental_positron")]
     experimental_positron: bool,
+    #[serde(rename = "experimental_rstudio")]
+    experimental_rstudio: bool,
     #[serde(rename = "experimental_devPodPro")]
     experimental_devpod_pro: bool,
     #[serde(rename = "experimental_colorMode")]
@@ -86,6 +85,15 @@ impl Settings {
         if store.is_err() {
             error!("unable to open store {}", SETTINGS_FILE_NAME);
             return false;
+        }
+
+        let mut is_flatpak = false;
+        match env::var("FLATPAK_ID") {
+            Ok(_) => is_flatpak = true,
+            Err(_) => is_flatpak = false,
+        }
+        if is_flatpak {
+            return false
         }
 
         store

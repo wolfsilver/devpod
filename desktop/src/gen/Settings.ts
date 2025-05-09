@@ -23,11 +23,11 @@ export interface Settings {
   experimental_jupyterNotebooks: boolean
   experimental_vscodeInsiders: boolean
   experimental_cursor: boolean
-  experimental_jupyterDesktop: boolean
-  experimental_marimo: boolean
   experimental_codium: boolean
   experimental_zed: boolean
   experimental_positron: boolean
+  experimental_rstudio: boolean
+  experimental_windsurf: boolean
   experimental_devPodPro: boolean
   experimental_colorMode: ColorMode
 }

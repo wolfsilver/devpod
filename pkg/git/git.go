@@ -72,15 +72,13 @@ func NormalizeRepository(str string) (string, string, string, string, string) {
 	return str, prReference, branch, commit, subpath
 }
 
-func CommandContext(ctx context.Context, args ...string) *exec.Cmd {
+func CommandContext(ctx context.Context, extraEnv []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
-	cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -oBatchMode=yes -oStrictHostKeyChecking=no")
+	cmd.Env = append(os.Environ(), extraEnv...)
 	return cmd
 }
 
-func PingRepository(str string) bool {
+func PingRepository(str string, extraEnv []string) bool {
 	if !command.Exists("git") {
 		return false
 	}
@@ -88,7 +86,7 @@ func PingRepository(str string) bool {
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
-	_, err := CommandContext(timeoutCtx, "ls-remote", "--quiet", str).CombinedOutput()
+	_, err := CommandContext(timeoutCtx, extraEnv, "ls-remote", "--quiet", str).CombinedOutput()
 	return err == nil
 }
 
@@ -125,14 +123,26 @@ func NormalizeRepositoryGitInfo(str string) *GitInfo {
 	return NewGitInfo(repository, branch, commit, pr, subpath)
 }
 
-func CloneRepository(ctx context.Context, gitInfo *GitInfo, targetDir string, helper string, cloner Cloner, log log.Logger) error {
-	return CloneRepositoryWithEnv(ctx, gitInfo, []string{}, targetDir, helper, cloner, log)
+func CloneRepository(ctx context.Context, gitInfo *GitInfo, targetDir string, helper string, strictHostKeyChecking bool, log log.Logger, cloneOptions ...Option) error {
+	return CloneRepositoryWithEnv(ctx, gitInfo, nil, targetDir, helper, strictHostKeyChecking, log, cloneOptions...)
 }
 
-func CloneRepositoryWithEnv(ctx context.Context, gitInfo *GitInfo, extraEnv []string, targetDir string, helper string, cloner Cloner, log log.Logger) error {
-	if cloner == nil {
-		cloner = NewCloner(FullCloneStrategy)
+func GetDefaultExtraEnv(strictHostKeyChecking bool) []string {
+	newExtraEnv := []string{"GIT_TERMINAL_PROMPT=0"}
+	sshArgs := "GIT_SSH_COMMAND=ssh -oBatchMode=yes -oStrictHostKeyChecking="
+	if strictHostKeyChecking {
+		sshArgs += "yes"
+	} else {
+		sshArgs += "no"
 	}
+	return append(newExtraEnv, sshArgs)
+}
+
+func CloneRepositoryWithEnv(ctx context.Context, gitInfo *GitInfo, extraEnv []string, targetDir string, helper string, strictHostKeyChecking bool, log log.Logger, cloneOptions ...Option) error {
+	cloner := NewClonerWithOpts(cloneOptions...)
+
+	// make sure to append the extra env so that they override existing env vars if set
+	extraEnv = append(GetDefaultExtraEnv(strictHostKeyChecking), extraEnv...)
 
 	extraArgs := []string{}
 	if helper != "" {
@@ -148,17 +158,17 @@ func CloneRepositoryWithEnv(ctx context.Context, gitInfo *GitInfo, extraEnv []st
 	}
 
 	if gitInfo.PR != "" {
-		return checkoutPR(ctx, gitInfo, targetDir, log)
+		return checkoutPR(ctx, gitInfo, extraEnv, targetDir, log)
 	}
 
 	if gitInfo.Commit != "" {
-		return checkoutCommit(ctx, gitInfo, targetDir, log)
+		return checkoutCommit(ctx, gitInfo, extraEnv, targetDir, log)
 	}
 
 	return nil
 }
 
-func checkoutPR(ctx context.Context, gitInfo *GitInfo, targetDir string, log log.Logger) error {
+func checkoutPR(ctx context.Context, gitInfo *GitInfo, extraEnv []string, targetDir string, log log.Logger) error {
 	log.Debugf("Fetching pull request : %s", gitInfo.PR)
 
 	prBranch := GetBranchNameForPR(gitInfo.PR)
@@ -168,7 +178,7 @@ func checkoutPR(ctx context.Context, gitInfo *GitInfo, targetDir string, log log
 	// See [this doc](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/checking-out-pull-requests-locally#modifying-an-inactive-pull-request-locally)
 	// Command args: `git fetch origin pull/996/head:PR996`
 	fetchArgs := []string{"fetch", "origin", gitInfo.PR + ":" + prBranch}
-	fetchCmd := CommandContext(ctx, fetchArgs...)
+	fetchCmd := CommandContext(ctx, extraEnv, fetchArgs...)
 	fetchCmd.Dir = targetDir
 	if err := fetchCmd.Run(); err != nil {
 		return fmt.Errorf("fetch pull request reference: %w", err)
@@ -176,7 +186,7 @@ func checkoutPR(ctx context.Context, gitInfo *GitInfo, targetDir string, log log
 
 	// git switch PR996
 	switchArgs := []string{"switch", prBranch}
-	switchCmd := CommandContext(ctx, switchArgs...)
+	switchCmd := CommandContext(ctx, extraEnv, switchArgs...)
 	switchCmd.Dir = targetDir
 	if err := switchCmd.Run(); err != nil {
 		return fmt.Errorf("switch to branch: %w", err)
@@ -185,14 +195,14 @@ func checkoutPR(ctx context.Context, gitInfo *GitInfo, targetDir string, log log
 	return nil
 }
 
-func checkoutCommit(ctx context.Context, gitInfo *GitInfo, targetDir string, log log.Logger) error {
+func checkoutCommit(ctx context.Context, gitInfo *GitInfo, extraEnv []string, targetDir string, log log.Logger) error {
 	stdout := log.Writer(logrus.InfoLevel, false)
 	stderr := log.Writer(logrus.ErrorLevel, false)
 	defer stdout.Close()
 	defer stderr.Close()
 
 	args := []string{"reset", "--hard", gitInfo.Commit}
-	gitCommand := CommandContext(ctx, args...)
+	gitCommand := CommandContext(ctx, extraEnv, args...)
 	gitCommand.Dir = targetDir
 	gitCommand.Stdout = stdout
 	gitCommand.Stderr = stderr

@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -91,19 +90,21 @@ type UpOptions struct {
 }
 
 func (r *runner) Up(ctx context.Context, options UpOptions, timeout time.Duration) (*config.Result, error) {
-	if r.shouldRecreateWorkspace(options) {
-		return r.recreateCustomDriver(ctx, options, timeout)
-	}
+	r.Log.Debugf("Up devcontainer for workspace '%s' with timeout %s", r.WorkspaceConfig.Workspace.ID, timeout)
 
 	substitutedConfig, substitutionContext, err := r.getSubstitutedConfig(options.CLIOptions)
 	if err != nil {
 		return nil, err
 	}
-
 	defer cleanupBuildInformation(substitutedConfig.Config)
 
-	if err := runInitializeCommand(r.LocalWorkspaceFolder, substitutedConfig.Config, options.InitEnv, r.Log); err != nil {
-		return nil, err
+	// do not run initialize command in platform mode
+	if !options.CLIOptions.Platform.Enabled {
+		if err := runInitializeCommand(r.LocalWorkspaceFolder, substitutedConfig.Config, options.InitEnv, r.Log); err != nil {
+			return nil, err
+		}
+	} else if len(substitutedConfig.Config.InitializeCommand) > 0 {
+		r.Log.Info("Skipping initializeCommand on platform")
 	}
 
 	switch {
@@ -148,11 +149,6 @@ func (r *runner) runDefaultContainer(ctx context.Context, options UpOptions, sub
 	return r.runSingleContainer(ctx, substitutedConfig, substitutionContext, options, timeout)
 }
 
-func (r *runner) shouldRecreateWorkspace(options UpOptions) bool {
-	_, isDockerDriver := r.Driver.(driver.DockerDriver)
-	return options.Recreate && !isDockerDriver
-}
-
 func (r *runner) Command(
 	ctx context.Context,
 	user string,
@@ -175,23 +171,6 @@ func (r *runner) Find(ctx context.Context) (*config.ContainerDetails, error) {
 
 func (r *runner) Logs(ctx context.Context, writer io.Writer) error {
 	return r.Driver.GetDevContainerLogs(ctx, r.ID, writer, writer)
-}
-
-func (r *runner) recreateCustomDriver(ctx context.Context, options UpOptions, timeout time.Duration) (*config.Result, error) {
-	err := r.Driver.StopDevContainer(ctx, r.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	// relaunch Up without recreate now
-	options.Reset = false
-	options.Recreate = false
-	return r.Up(ctx, options, timeout)
-}
-
-func cleanupBuildInformation(c *config.DevContainerConfig) {
-	contextPath := config.GetContextPath(c)
-	_ = os.RemoveAll(filepath.Join(contextPath, config.DevPodContextFeatureFolder))
 }
 
 func isDockerFileConfig(config *config.DevContainerConfig) bool {

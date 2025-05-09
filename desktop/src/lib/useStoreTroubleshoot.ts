@@ -34,13 +34,20 @@ export function useStoreTroubleshoot() {
 
       const zip = new JSZip()
 
-      const logFilesData = await Promise.all(
-        unwrappedLogFiles.map(async ([src, target]) => {
-          const data = await client.readFile(src)
+      const logFilesData = (
+        await Promise.all(
+          unwrappedLogFiles.map(async ([src, target]) => {
+            try {
+              const data = await client.readFile(src)
 
-          return { fileName: target, data }
-        })
-      )
+              return { fileName: target, data }
+            } catch {
+              // ignore missing log files and continue
+              return null
+            }
+          })
+        )
+      ).filter((d): d is Exclude<typeof d, null> => d != null)
 
       logFilesData.forEach((logFile) => {
         zip.file(logFile.fileName, logFile.data)
@@ -67,7 +74,7 @@ export function useStoreTroubleshoot() {
     },
     onError(error) {
       toast({
-        title: `Failed to save logs: ${error}`,
+        title: `Failed to save zip: ${error}`,
         status: "error",
         isClosable: true,
         duration: 30_000, // 30 sec

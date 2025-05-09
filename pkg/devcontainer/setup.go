@@ -58,7 +58,7 @@ func (r *runner) setupContainer(
 	// Ensure workspace mounts cannot escape their content folder for local agents in proxy mode.
 	// There _might_ be a use-case that requires an allowlist for certain directories
 	// when running as a standalone runner with docker-in-docker set up. Let's add it when/if the time comes.
-	if r.WorkspaceConfig.Agent.Local == "true" && r.WorkspaceConfig.CLIOptions.Proxy {
+	if r.WorkspaceConfig.Agent.Local == "true" && r.WorkspaceConfig.CLIOptions.Platform.Enabled {
 		result.MergedConfig.Mounts = filterWorkspaceMounts(result.MergedConfig.Mounts, r.WorkspaceConfig.ContentFolder, r.Log)
 	}
 
@@ -80,7 +80,7 @@ func (r *runner) setupContainer(
 		Agent:            r.WorkspaceConfig.Agent,
 		ContentFolder:    r.WorkspaceConfig.ContentFolder,
 	}
-	if crane.ShouldUse(&r.WorkspaceConfig.CLIOptions) {
+	if crane.ShouldUse(&r.WorkspaceConfig.CLIOptions) && r.WorkspaceConfig.Workspace.Source.GitRepository != "" {
 		workspaceConfig.PullFromInsideContainer = "true"
 	}
 	// compress container workspace info
@@ -96,18 +96,15 @@ func (r *runner) setupContainer(
 	// check if docker driver
 	_, isDockerDriver := r.Driver.(driver.DockerDriver)
 
-	// ssh tunnel
-	sshTunnelCmd := fmt.Sprintf("'%s' helper ssh-server --stdio", agent.ContainerDevPodHelperLocation)
-	if ide.ReusesAuthSock(r.WorkspaceConfig.Workspace.IDE.Name) {
-		sshTunnelCmd += fmt.Sprintf(" --reuse-ssh-auth-sock=%s", r.WorkspaceConfig.CLIOptions.SSHAuthSockID)
-	}
-	if r.Log.GetLevel() == logrus.DebugLevel {
-		sshTunnelCmd += " --debug"
-	}
-
 	// setup container
 	r.Log.Infof("Setup container...")
-	setupCommand := fmt.Sprintf("'%s' agent container setup --setup-info '%s' --container-workspace-info '%s'", agent.ContainerDevPodHelperLocation, compressed, workspaceConfigCompressed)
+
+	setupCommand := fmt.Sprintf(
+		"'%s' agent container setup --setup-info '%s' --container-workspace-info '%s'",
+		agent.ContainerDevPodHelperLocation,
+		compressed,
+		workspaceConfigCompressed,
+	)
 	if runtime.GOOS == "linux" || !isDockerDriver {
 		setupCommand += " --chown-workspace"
 	}
@@ -117,14 +114,41 @@ func (r *runner) setupContainer(
 	if r.WorkspaceConfig.Agent.InjectGitCredentials != "false" {
 		setupCommand += " --inject-git-credentials"
 	}
+	if r.WorkspaceConfig.CLIOptions.Platform.AccessKey != "" &&
+		r.WorkspaceConfig.CLIOptions.Platform.WorkspaceHost != "" &&
+		r.WorkspaceConfig.CLIOptions.Platform.PlatformHost != "" {
+		setupCommand += fmt.Sprintf(" --access-key '%s' --workspace-host '%s' --platform-host '%s'", r.WorkspaceConfig.CLIOptions.Platform.AccessKey, r.WorkspaceConfig.CLIOptions.Platform.WorkspaceHost, r.WorkspaceConfig.CLIOptions.Platform.PlatformHost)
+	}
 	if r.Log.GetLevel() == logrus.DebugLevel {
 		setupCommand += " --debug"
+	}
+
+	// run setup server
+	runSetupServer := func(ctx context.Context, stdin io.WriteCloser, stdout io.Reader) (*config.Result, error) {
+		return tunnelserver.RunSetupServer(
+			ctx,
+			stdout,
+			stdin,
+			r.WorkspaceConfig.Agent.InjectGitCredentials != "false",
+			r.WorkspaceConfig.Agent.InjectDockerCredentials != "false",
+			config.GetMounts(result),
+			r.Log,
+			tunnelserver.WithPlatformOptions(&r.WorkspaceConfig.CLIOptions.Platform),
+		)
+	}
+
+	// ssh tunnel
+	sshTunnelCmd := fmt.Sprintf("'%s' helper ssh-server --stdio", agent.ContainerDevPodHelperLocation)
+	if ide.ReusesAuthSock(r.WorkspaceConfig.Workspace.IDE.Name) {
+		sshTunnelCmd += fmt.Sprintf(" --reuse-ssh-auth-sock=%s", r.WorkspaceConfig.CLIOptions.SSHAuthSockID)
+	}
+	if r.Log.GetLevel() == logrus.DebugLevel {
+		sshTunnelCmd += " --debug"
 	}
 
 	agentInjectFunc := func(cancelCtx context.Context, sshCmd string, sshTunnelStdinReader, sshTunnelStdoutWriter *os.File, writer io.WriteCloser) error {
 		return r.Driver.CommandDevContainer(cancelCtx, r.ID, "root", sshCmd, sshTunnelStdinReader, sshTunnelStdoutWriter, writer)
 	}
-
 	return sshtunnel.ExecuteCommand(
 		ctx,
 		nil,
@@ -133,17 +157,7 @@ func (r *runner) setupContainer(
 		sshTunnelCmd,
 		setupCommand,
 		r.Log,
-		func(ctx context.Context, stdin io.WriteCloser, stdout io.Reader) (*config.Result, error) {
-			return tunnelserver.RunSetupServer(
-				ctx,
-				stdout,
-				stdin,
-				r.WorkspaceConfig.Agent.InjectGitCredentials != "false",
-				r.WorkspaceConfig.Agent.InjectDockerCredentials != "false",
-				config.GetMounts(result),
-				r.Log,
-			)
-		},
+		runSetupServer,
 	)
 }
 

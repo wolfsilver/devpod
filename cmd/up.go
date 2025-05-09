@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/blang/semver"
 	"github.com/loft-sh/devpod/cmd/flags"
@@ -23,13 +25,12 @@ import (
 	"github.com/loft-sh/devpod/pkg/config"
 	config2 "github.com/loft-sh/devpod/pkg/devcontainer/config"
 	"github.com/loft-sh/devpod/pkg/devcontainer/sshtunnel"
-	dpFlags "github.com/loft-sh/devpod/pkg/flags"
 	"github.com/loft-sh/devpod/pkg/ide"
 	"github.com/loft-sh/devpod/pkg/ide/fleet"
 	"github.com/loft-sh/devpod/pkg/ide/jetbrains"
 	"github.com/loft-sh/devpod/pkg/ide/jupyter"
-	"github.com/loft-sh/devpod/pkg/ide/marimo"
 	"github.com/loft-sh/devpod/pkg/ide/openvscode"
+	"github.com/loft-sh/devpod/pkg/ide/rstudio"
 	"github.com/loft-sh/devpod/pkg/ide/vscode"
 	"github.com/loft-sh/devpod/pkg/ide/zed"
 	open2 "github.com/loft-sh/devpod/pkg/open"
@@ -59,11 +60,10 @@ type UpCmd struct {
 
 	ProviderOptions []string
 
-	ConfigureSSH            bool
-	GPGAgentForwarding      bool
-	OpenIDE                 bool
-	SetupLoftPlatformAccess bool
-	Reconfigure             bool
+	ConfigureSSH       bool
+	GPGAgentForwarding bool
+	OpenIDE            bool
+	Reconfigure        bool
 
 	SSHConfigPath string
 
@@ -87,17 +87,22 @@ func NewUpCmd(f *flags.GlobalFlags) *cobra.Command {
 				return err
 			}
 
-			ctx := cobraCmd.Context()
+			if devPodConfig.ContextOption(config.ContextOptionSSHStrictHostKeyChecking) == "true" {
+				cmd.StrictHostKeyChecking = true
+			}
+
+			ctx, cancel := WithSignals(cobraCmd.Context())
+			defer cancel()
+
 			client, logger, err := cmd.prepareClient(ctx, devPodConfig, args)
 			if err != nil {
 				return fmt.Errorf("prepare workspace client: %w", err)
 			}
 			telemetry.CollectorCLI.SetClient(client)
 
-			return cmd.Run(ctx, devPodConfig, client, logger)
+			return cmd.Run(ctx, devPodConfig, client, args, logger)
 		},
 	}
-	dpFlags.SetGitCredentialsFlags(upCmd.Flags(), &cmd.GitCredentialsFlags)
 	upCmd.Flags().BoolVar(&cmd.ConfigureSSH, "configure-ssh", true, "If true will configure the ssh config to include the DevPod workspace")
 	upCmd.Flags().BoolVar(&cmd.GPGAgentForwarding, "gpg-agent-forwarding", false, "If true forward the local gpg-agent to the DevPod workspace")
 	upCmd.Flags().StringVar(&cmd.SSHConfigPath, "ssh-config", "", "The path to the ssh config to modify, if empty will use ~/.ssh/config")
@@ -108,10 +113,6 @@ func NewUpCmd(f *flags.GlobalFlags) *cobra.Command {
 	upCmd.Flags().StringArrayVar(&cmd.IDEOptions, "ide-option", []string{}, "IDE option in the form KEY=VALUE")
 	upCmd.Flags().StringVar(&cmd.DevContainerImage, "devcontainer-image", "", "The container image to use, this will override the devcontainer.json value in the project")
 	upCmd.Flags().StringVar(&cmd.DevContainerPath, "devcontainer-path", "", "The path to the devcontainer.json relative to the project")
-	upCmd.Flags().StringVar(&cmd.EnvironmentTemplate, "environment-template", "", "Environment template to use")
-	_ = upCmd.Flags().MarkHidden("environment-template")
-	upCmd.Flags().StringVar(&cmd.EnvironmentTemplateVersion, "environment-template-version", "", "Specific version of DevPodEnvironmentTemplate to use. Empty for latest.")
-	_ = upCmd.Flags().MarkHidden("environment-template-version")
 	upCmd.Flags().StringArrayVar(&cmd.ProviderOptions, "provider-option", []string{}, "Provider option in the form KEY=VALUE")
 	upCmd.Flags().BoolVar(&cmd.Reconfigure, "reconfigure", false, "Reconfigure the options for this workspace. Only supported in DevPod Pro right now.")
 	upCmd.Flags().BoolVar(&cmd.Recreate, "recreate", false, "If true will remove any existing containers and recreate them")
@@ -128,17 +129,8 @@ func NewUpCmd(f *flags.GlobalFlags) *cobra.Command {
 	upCmd.Flags().BoolVar(&cmd.GitCloneRecursiveSubmodules, "git-clone-recursive-submodules", false, "If true will clone git submodule repositories recursively")
 	upCmd.Flags().StringVar(&cmd.GitSSHSigningKey, "git-ssh-signing-key", "", "The ssh key to use when signing git commits. Used to explicitly setup DevPod's ssh signature forwarding with given key. Should be same format as value of `git config user.signingkey`")
 	upCmd.Flags().StringVar(&cmd.FallbackImage, "fallback-image", "", "The fallback image to use if no devcontainer configuration has been detected")
-
 	upCmd.Flags().BoolVar(&cmd.DisableDaemon, "disable-daemon", false, "If enabled, will not install a daemon into the target machine to track activity")
 	upCmd.Flags().StringVar(&cmd.Source, "source", "", "Optional source for the workspace. E.g. git:https://github.com/my-org/my-repo")
-	upCmd.Flags().BoolVar(&cmd.Proxy, "proxy", false, "If true will forward agent requests to stdio")
-	upCmd.Flags().BoolVar(&cmd.ForceCredentials, "force-credentials", false, "If true will always use local credentials")
-	_ = upCmd.Flags().MarkHidden("force-credentials")
-	upCmd.Flags().BoolVar(&cmd.SetupLoftPlatformAccess, "setup-loft-platform-access", false, "If true will setup Loft Platform access based on local configuration")
-	_ = upCmd.Flags().MarkHidden("setup-loft-platform-access")
-
-	upCmd.Flags().StringVar(&cmd.SSHKey, "ssh-key", "", "The ssh-key to use")
-	_ = upCmd.Flags().MarkHidden("ssh-key")
 
 	// testing
 	upCmd.Flags().StringVar(&cmd.DaemonInterval, "daemon-interval", "", "TESTING ONLY")
@@ -153,6 +145,7 @@ func (cmd *UpCmd) Run(
 	ctx context.Context,
 	devPodConfig *config.Config,
 	client client2.BaseWorkspaceClient,
+	args []string,
 	log log.Logger,
 ) error {
 	// a reset implies a recreate
@@ -166,11 +159,11 @@ func (cmd *UpCmd) Run(
 	if cmd.IDE != "" {
 		targetIDE = cmd.IDE
 	}
-	if !cmd.Proxy && ide.ReusesAuthSock(targetIDE) {
+	if !cmd.Platform.Enabled && ide.ReusesAuthSock(targetIDE) {
 		cmd.SSHAuthSockID = util.RandStringBytes(10)
 		log.Debug("Reusing SSH_AUTH_SOCK", cmd.SSHAuthSockID)
-	} else if cmd.Proxy && ide.ReusesAuthSock(targetIDE) {
-		log.Debug("Reusing SSH_AUTH_SOCK is not supported with proxy mode, consider launching the IDE from the platform UI")
+	} else if cmd.Platform.Enabled && ide.ReusesAuthSock(targetIDE) {
+		log.Debug("Reusing SSH_AUTH_SOCK is not supported with platform mode, consider launching the IDE from the platform UI")
 	}
 
 	// run devpod agent up
@@ -179,7 +172,7 @@ func (cmd *UpCmd) Run(
 		return err
 	} else if result == nil {
 		return fmt.Errorf("didn't receive a result back from agent")
-	} else if cmd.Proxy {
+	} else if cmd.Platform.Enabled {
 		return nil
 	}
 
@@ -190,7 +183,6 @@ func (cmd *UpCmd) Run(
 	if result.MergedConfig != nil && result.MergedConfig.WorkspaceFolder != "" {
 		workdir = result.MergedConfig.WorkspaceFolder
 	}
-
 	if client.WorkspaceConfig().Source.GitSubPath != "" {
 		result.SubstitutionContext.ContainerWorkspaceFolder = filepath.Join(result.SubstitutionContext.ContainerWorkspaceFolder, client.WorkspaceConfig().Source.GitSubPath)
 		workdir = result.SubstitutionContext.ContainerWorkspaceFolder
@@ -205,7 +197,7 @@ func (cmd *UpCmd) Run(
 		}
 		setupGPGAgentForwarding := cmd.GPGAgentForwarding || devPodConfig.ContextOption(config.ContextOptionGPGAgentForwarding) == "true"
 
-		err = configureSSH(devPodConfig, client, cmd.SSHConfigPath, user, workdir, setupGPGAgentForwarding, devPodHome)
+		err = configureSSH(client, cmd.SSHConfigPath, user, workdir, setupGPGAgentForwarding, devPodHome)
 		if err != nil {
 			return err
 		}
@@ -276,6 +268,15 @@ func (cmd *UpCmd) Run(
 				vscode.FlavorPositron,
 				log,
 			)
+		case string(config.IDEWindsurf):
+			return vscode.Open(
+				ctx,
+				client.Workspace(),
+				result.SubstitutionContext.ContainerWorkspaceFolder,
+				vscode.Options.GetValue(ideConfig.Options, vscode.OpenNewWindow) == "true",
+				vscode.FlavorWindsurf,
+				log,
+			)
 		case string(config.IDEOpenVSCode):
 			return startVSCodeInBrowser(
 				cmd.GPGAgentForwarding,
@@ -285,8 +286,6 @@ func (cmd *UpCmd) Run(
 				result.SubstitutionContext.ContainerWorkspaceFolder,
 				user,
 				ideConfig.Options,
-				cmd.GitUsername,
-				cmd.GitToken,
 				cmd.SSHAuthSockID,
 				log,
 			)
@@ -322,35 +321,20 @@ func (cmd *UpCmd) Run(
 				client,
 				user,
 				ideConfig.Options,
-				cmd.GitUsername,
-				cmd.GitToken,
 				cmd.SSHAuthSockID,
 				log,
 			)
-		case string(config.IDEJupyterDesktop):
-			return startJupyterDesktop(
+		case string(config.IDERStudio):
+			return startRStudioInBrowser(
 				cmd.GPGAgentForwarding,
 				ctx,
 				devPodConfig,
 				client,
 				user,
 				ideConfig.Options,
-				cmd.GitUsername,
-				cmd.GitToken,
 				cmd.SSHAuthSockID,
-				log)
-		case string(config.IDEMarimo):
-			return startMarimoInBrowser(
-				cmd.GPGAgentForwarding,
-				ctx,
-				devPodConfig,
-				client,
-				user,
-				ideConfig.Options,
-				cmd.GitUsername,
-				cmd.GitToken,
-				cmd.SSHAuthSockID,
-				log)
+				log,
+			)
 		}
 	}
 
@@ -363,11 +347,16 @@ func (cmd *UpCmd) devPodUp(
 	client client2.BaseWorkspaceClient,
 	log log.Logger,
 ) (*config2.Result, error) {
-	err := client.Lock(ctx)
-	if err != nil {
-		return nil, err
+	var err error
+
+	// only lock if we are not in platform mode
+	if !cmd.Platform.Enabled {
+		err := client.Lock(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer client.Unlock()
 	}
-	defer client.Unlock()
 
 	// get result
 	var result *config2.Result
@@ -380,6 +369,11 @@ func (cmd *UpCmd) devPodUp(
 		}
 	case client2.ProxyClient:
 		result, err = cmd.devPodUpProxy(ctx, client, log)
+		if err != nil {
+			return nil, err
+		}
+	case client2.DaemonClient:
+		result, err = cmd.devPodUpDaemon(ctx, client)
 		if err != nil {
 			return nil, err
 		}
@@ -472,6 +466,33 @@ func (cmd *UpCmd) devPodUpProxy(
 	return result, <-errChan
 }
 
+func (cmd *UpCmd) devPodUpDaemon(
+	ctx context.Context,
+	client client2.DaemonClient,
+) (*config2.Result, error) {
+	// build devpod up options
+	workspace := client.WorkspaceConfig()
+	baseOptions := cmd.CLIOptions
+	baseOptions.ID = workspace.ID
+	baseOptions.DevContainerPath = workspace.DevContainerPath
+	baseOptions.DevContainerImage = workspace.DevContainerImage
+	baseOptions.IDE = workspace.IDE.Name
+	baseOptions.IDEOptions = nil
+	baseOptions.Source = workspace.Source.String()
+	for optionName, optionValue := range workspace.IDE.Options {
+		baseOptions.IDEOptions = append(
+			baseOptions.IDEOptions,
+			optionName+"="+optionValue.Value,
+		)
+	}
+
+	// run devpod up elsewhere
+	return client.Up(ctx, client2.UpOptions{
+		CLIOptions: baseOptions,
+		Debug:      cmd.Debug,
+	})
+}
+
 func (cmd *UpCmd) devPodUpMachine(
 	ctx context.Context,
 	devPodConfig *config.Config,
@@ -492,6 +513,11 @@ func (cmd *UpCmd) devPodUpMachine(
 	// create container etc.
 	log.Infof("Creating devcontainer...")
 	defer log.Debugf("Done creating devcontainer")
+
+	// if we run on a platform, we need to pass the platform options
+	if cmd.Platform.Enabled {
+		return buildAgentClient(ctx, client, cmd.CLIOptions, "up", log, tunnelserver.WithPlatformOptions(&cmd.Platform))
+	}
 
 	// ssh tunnel command
 	sshTunnelCmd := fmt.Sprintf("'%s' helper ssh-server --stdio", client.AgentPath())
@@ -543,88 +569,16 @@ func (cmd *UpCmd) devPodUpMachine(
 		agentCommand,
 		log,
 		func(ctx context.Context, stdin io.WriteCloser, stdout io.Reader) (*config2.Result, error) {
-			if cmd.Proxy {
-				// create tunnel client on stdin & stdout
-				tunnelClient, err := tunnelserver.NewTunnelClient(os.Stdin, os.Stdout, true, 0)
-				if err != nil {
-					return nil, errors.Wrap(err, "create tunnel client")
-				}
-				allowGitCredentials := devPodConfig.ContextOption(config.ContextOptionSSHInjectGitCredentials) == "true"
-				allowDockerCredentials := devPodConfig.ContextOption(config.ContextOptionSSHInjectDockerCredentials) == "true"
-
-				return tunnelserver.RunProxyServer(ctx, tunnelClient, stdout, stdin, allowGitCredentials, allowDockerCredentials, cmd.GitUsername, cmd.GitToken, log)
-			}
-
 			return tunnelserver.RunUpServer(
 				ctx,
 				stdout,
 				stdin,
-				client.AgentInjectGitCredentials(),
-				client.AgentInjectDockerCredentials(),
+				client.AgentInjectGitCredentials(cmd.CLIOptions),
+				client.AgentInjectDockerCredentials(cmd.CLIOptions),
 				client.WorkspaceConfig(),
 				log,
-				tunnelserver.WithGitCredentialsOverride(cmd.GitUsername, cmd.GitToken),
 			)
 		},
-	)
-}
-
-func startMarimoInBrowser(
-	forwardGpg bool,
-	ctx context.Context,
-	devPodConfig *config.Config,
-	client client2.BaseWorkspaceClient,
-	user string,
-	ideOptions map[string]config.OptionValue,
-	gitUsername, gitToken, authSockID string,
-	logger log.Logger,
-) error {
-	if forwardGpg {
-		err := performGpgForwarding(client, logger)
-		if err != nil {
-			return err
-		}
-	}
-
-	// determine port
-	address, port, err := parseAddressAndPort(
-		marimo.Options.GetValue(ideOptions, marimo.BindAddressOption),
-		marimo.DefaultServerPort,
-	)
-	if err != nil {
-		return err
-	}
-
-	// wait until reachable then open browser
-	targetURL := fmt.Sprintf("http://localhost:%d?access_token=%s", port, marimo.Options.GetValue(ideOptions, marimo.AccessToken))
-	if marimo.Options.GetValue(ideOptions, marimo.OpenOption) == "true" {
-		go func() {
-			err = open2.Open(ctx, targetURL, logger)
-			if err != nil {
-				logger.Errorf("error opening marimo: %v", err)
-			}
-
-			logger.Infof(
-				"Successfully started marimo in browser mode. Please keep this terminal open as long as you use Marimo",
-			)
-		}()
-	}
-
-	// start in browser
-	logger.Infof("Starting marimo in browser mode at %s", targetURL)
-	extraPorts := []string{fmt.Sprintf("%s:%d", address, marimo.DefaultServerPort)}
-	return startBrowserTunnel(
-		ctx,
-		devPodConfig,
-		client,
-		user,
-		targetURL,
-		false,
-		extraPorts,
-		gitUsername,
-		gitToken,
-		authSockID,
-		logger,
 	)
 }
 
@@ -635,7 +589,7 @@ func startJupyterNotebookInBrowser(
 	client client2.BaseWorkspaceClient,
 	user string,
 	ideOptions map[string]config.OptionValue,
-	gitUsername, gitToken, authSockID string,
+	authSockID string,
 	logger log.Logger,
 ) error {
 	if forwardGpg {
@@ -680,21 +634,19 @@ func startJupyterNotebookInBrowser(
 		targetURL,
 		false,
 		extraPorts,
-		gitUsername,
-		gitToken,
 		authSockID,
 		logger,
 	)
 }
 
-func startJupyterDesktop(
+func startRStudioInBrowser(
 	forwardGpg bool,
 	ctx context.Context,
 	devPodConfig *config.Config,
 	client client2.BaseWorkspaceClient,
 	user string,
 	ideOptions map[string]config.OptionValue,
-	gitUsername, gitToken, authSockID string,
+	authSockID string,
 	logger log.Logger,
 ) error {
 	if forwardGpg {
@@ -705,29 +657,32 @@ func startJupyterDesktop(
 	}
 
 	// determine port
-	jupyterAddress, jupyterPort, err := parseAddressAndPort(
-		jupyter.Options.GetValue(ideOptions, jupyter.BindAddressOption),
-		jupyter.DefaultServerPort,
+	addr, port, err := parseAddressAndPort(
+		rstudio.Options.GetValue(ideOptions, rstudio.BindAddressOption),
+		rstudio.DefaultServerPort,
 	)
 	if err != nil {
 		return err
 	}
 
 	// wait until reachable then open browser
-	targetURL := fmt.Sprintf("http://localhost:%d/lab", jupyterPort)
-	if jupyter.Options.GetValue(ideOptions, jupyter.OpenOption) == "true" {
+	targetURL := fmt.Sprintf("http://localhost:%d", port)
+	if rstudio.Options.GetValue(ideOptions, rstudio.OpenOption) == "true" {
 		go func() {
-			err = open2.JLabDesktop(ctx, targetURL, logger)
+			err = open2.Open(ctx, targetURL, logger)
 			if err != nil {
-				logger.Errorf("error opening jupyter desktop: %v", err)
+				logger.Errorf("error opening rstudio: %v", err)
 			}
-			logger.Infof("Successfully started jupyter desktop")
+
+			logger.Infof(
+				"Successfully started RStudio Server in browser mode. Please keep this terminal open as long as you use it",
+			)
 		}()
 	}
 
 	// start in browser
-	logger.Infof("Starting jupyter desktop using server %s", targetURL)
-	extraPorts := []string{fmt.Sprintf("%s:%d", jupyterAddress, jupyter.DefaultServerPort)}
+	logger.Infof("Starting RStudio server in browser mode at %s", targetURL)
+	extraPorts := []string{fmt.Sprintf("%s:%d", addr, rstudio.DefaultServerPort)}
 	return startBrowserTunnel(
 		ctx,
 		devPodConfig,
@@ -736,8 +691,6 @@ func startJupyterDesktop(
 		targetURL,
 		false,
 		extraPorts,
-		gitUsername,
-		gitToken,
 		authSockID,
 		logger,
 	)
@@ -785,7 +738,7 @@ func startVSCodeInBrowser(
 	client client2.BaseWorkspaceClient,
 	workspaceFolder, user string,
 	ideOptions map[string]config.OptionValue,
-	gitUsername, gitToken, authSockID string,
+	authSockID string,
 	logger log.Logger,
 ) error {
 	if forwardGpg {
@@ -831,8 +784,6 @@ func startVSCodeInBrowser(
 		targetURL,
 		forwardPorts,
 		extraPorts,
-		gitUsername,
-		gitToken,
 		authSockID,
 		logger,
 	)
@@ -925,7 +876,7 @@ func startBrowserTunnel(
 	user, targetURL string,
 	forwardPorts bool,
 	extraPorts []string,
-	gitUsername, gitToken, authSockID string,
+	authSockID string,
 	logger log.Logger,
 ) error {
 	// Setup a backhaul SSH connection using the remote user so there is an AUTH SOCK to use
@@ -938,6 +889,33 @@ func startBrowserTunnel(
 			}
 		}()
 	}
+
+	// handle this directly with the daemon client
+	daemonClient, ok := client.(client2.DaemonClient)
+	if ok {
+		toolClient, _, err := daemonClient.SSHClients(ctx, user)
+		if err != nil {
+			return err
+		}
+		defer toolClient.Close()
+
+		err = startServicesDaemon(ctx,
+			devPodConfig,
+			daemonClient,
+			toolClient,
+			user,
+			logger,
+			forwardPorts,
+			extraPorts,
+		)
+		if err != nil {
+			return err
+		}
+		<-ctx.Done()
+
+		return nil
+	}
+
 	err := tunnel.NewTunnel(
 		ctx,
 		func(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
@@ -967,6 +945,10 @@ func startBrowserTunnel(
 				})
 			}
 
+			configureDockerCredentials := devPodConfig.ContextOption(config.ContextOptionSSHInjectDockerCredentials) == "true"
+			configureGitCredentials := devPodConfig.ContextOption(config.ContextOptionSSHInjectGitCredentials) == "true"
+			configureGitSSHSignatureHelper := devPodConfig.ContextOption(config.ContextOptionGitSSHSignatureForwarding) == "true"
+
 			// run in container
 			err := tunnel.RunServices(
 				ctx,
@@ -975,13 +957,15 @@ func startBrowserTunnel(
 				user,
 				forwardPorts,
 				extraPorts,
-				gitUsername,
-				gitToken,
+				nil,
 				client.WorkspaceConfig(),
+				configureDockerCredentials,
+				configureGitCredentials,
+				configureGitSSHSignatureHelper,
 				logger,
 			)
 			if err != nil {
-				logger.Errorf("error running credentials server: %v", err)
+				return fmt.Errorf("run credentials server in browser tunnel: %w", err)
 			}
 
 			<-ctx.Done()
@@ -995,7 +979,7 @@ func startBrowserTunnel(
 	return nil
 }
 
-func configureSSH(c *config.Config, client client2.BaseWorkspaceClient, sshConfigPath, user, workdir string, gpgagent bool, devPodHome string) error {
+func configureSSH(client client2.BaseWorkspaceClient, sshConfigPath, user, workdir string, gpgagent bool, devPodHome string) error {
 	path, err := devssh.ResolveSSHConfigPath(sshConfigPath)
 	if err != nil {
 		return errors.Wrap(err, "Invalid ssh config path")
@@ -1032,6 +1016,11 @@ func mergeDevPodUpOptions(baseOptions *provider2.CLIOptions) error {
 		baseOptions.InitEnv = append(oldOptions.InitEnv, baseOptions.InitEnv...)
 		baseOptions.PrebuildRepositories = append(oldOptions.PrebuildRepositories, baseOptions.PrebuildRepositories...)
 		baseOptions.IDEOptions = append(oldOptions.IDEOptions, baseOptions.IDEOptions...)
+	}
+
+	err = clientimplementation.DecodePlatformOptionsFromEnv(&baseOptions.Platform)
+	if err != nil {
+		return fmt.Errorf("decode platform options: %w", err)
 	}
 
 	return nil
@@ -1104,7 +1093,7 @@ func setupDotfiles(
 	log.Infof("Dotfiles git repository %s specified", dotfilesRepo)
 	log.Debug("Cloning dotfiles into the devcontainer...")
 
-	dotCmd, err := buildDotCmd(dotfilesRepo, dotfilesScript, envFiles, envKeyValuePairs, devPodConfig, client, log)
+	dotCmd, err := buildDotCmd(devPodConfig, dotfilesRepo, dotfilesScript, envFiles, envKeyValuePairs, client, log)
 	if err != nil {
 		return err
 	}
@@ -1129,13 +1118,17 @@ func setupDotfiles(
 	return nil
 }
 
-func buildDotCmdAgentArguments(dotfilesRepo, dotfilesScript string, log log.Logger) []string {
+func buildDotCmdAgentArguments(devPodConfig *config.Config, dotfilesRepo, dotfilesScript string, log log.Logger) []string {
 	agentArguments := []string{
 		"agent",
 		"workspace",
 		"install-dotfiles",
 		"--repository",
 		dotfilesRepo,
+	}
+
+	if devPodConfig.ContextOption(config.ContextOptionSSHStrictHostKeyChecking) == "true" {
+		agentArguments = append(agentArguments, "--strict-host-key-checking")
 	}
 
 	if log.GetLevel() == logrus.DebugLevel {
@@ -1150,7 +1143,7 @@ func buildDotCmdAgentArguments(dotfilesRepo, dotfilesScript string, log log.Logg
 	return agentArguments
 }
 
-func buildDotCmd(dotfilesRepo, dotfilesScript string, envFiles, envKeyValuePairs []string, devPodConfig *config.Config, client client2.BaseWorkspaceClient, log log.Logger) (*exec.Cmd, error) {
+func buildDotCmd(devPodConfig *config.Config, dotfilesRepo, dotfilesScript string, envFiles, envKeyValuePairs []string, client client2.BaseWorkspaceClient, log log.Logger) (*exec.Cmd, error) {
 	sshCmd := []string{
 		"ssh",
 		"--agent-forwarding=true",
@@ -1175,7 +1168,7 @@ func buildDotCmd(dotfilesRepo, dotfilesScript string, envFiles, envKeyValuePairs
 		remoteUser = "root"
 	}
 
-	agentArguments := buildDotCmdAgentArguments(dotfilesRepo, dotfilesScript, log)
+	agentArguments := buildDotCmdAgentArguments(devPodConfig, dotfilesRepo, dotfilesScript, log)
 	sshCmd = append(sshCmd,
 		"--user",
 		remoteUser,
@@ -1320,6 +1313,9 @@ func checkProviderUpdate(devPodConfig *config.Config, proInstance *provider2.Pro
 	if p.Config.Version == version.DevVersion {
 		return nil
 	}
+	if p.Config.Source.Internal {
+		return nil
+	}
 
 	v1, err := semver.Parse(strings.TrimPrefix(newVersion, "v"))
 	if err != nil {
@@ -1377,9 +1373,9 @@ func (cmd *UpCmd) prepareClient(ctx context.Context, devPodConfig *config.Config
 	}
 
 	var logger log.Logger = log.Default
-	if cmd.Proxy {
+	if cmd.Platform.Enabled {
 		logger = logger.ErrorStreamOnly()
-		logger.Debug("Running in proxy mode")
+		logger.Debug("Running in platform mode")
 		logger.Debug("Using error output stream")
 
 		// merge context options from env
@@ -1395,6 +1391,8 @@ func (cmd *UpCmd) prepareClient(ctx context.Context, devPodConfig *config.Config
 		source = provider2.ParseWorkspaceSource(cmd.Source)
 		if source == nil {
 			return nil, nil, fmt.Errorf("workspace source is missing")
+		} else if source.LocalFolder != "" && cmd.Platform.Enabled {
+			return nil, nil, fmt.Errorf("local folder is not supported in platform mode. Please specify a git repository instead")
 		}
 	}
 
@@ -1418,18 +1416,15 @@ func (cmd *UpCmd) prepareClient(ctx context.Context, devPodConfig *config.Config
 		source,
 		cmd.UID,
 		true,
+		cmd.Owner,
 		logger,
 	)
 	if err != nil {
 		return nil, logger, err
 	}
 
-	if !cmd.Proxy {
+	if !cmd.Platform.Enabled {
 		proInstance := getProInstance(devPodConfig, client.Provider(), logger)
-		if proInstance != nil {
-			cmd.SetupLoftPlatformAccess = true
-		}
-
 		err = checkProviderUpdate(devPodConfig, proInstance, logger)
 		if err != nil {
 			return nil, logger, err
@@ -1437,4 +1432,29 @@ func (cmd *UpCmd) prepareClient(ctx context.Context, devPodConfig *config.Config
 	}
 
 	return client, logger, nil
+}
+
+func WithSignals(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		select {
+		case <-signals:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	go func() {
+		<-ctx.Done()
+		<-signals
+		// force shutdown if context is done and we receive another signal
+		os.Exit(1)
+	}()
+
+	return ctx, func() {
+		cancel()
+		signal.Stop(signals)
+	}
 }

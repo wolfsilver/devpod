@@ -1,46 +1,46 @@
-import { ProWorkspaceInstance, useTemplates, useWorkspace, useWorkspaceActions } from "@/contexts"
-import { CogOutlined, Status } from "@/icons"
 import {
-  TParameterWithValue,
+  ProWorkspaceInstance,
+  useProjectClusters,
+  useTemplates,
+  useWorkspace,
+  useWorkspaceActions,
+} from "@/contexts"
+import {
   getDisplayName,
-  getParametersWithValues,
   useDeleteWorkspaceModal,
   useRebuildWorkspaceModal,
   useResetWorkspaceModal,
   useStopWorkspaceModal,
 } from "@/lib"
+import { useStoreTroubleshoot } from "@/lib/useStoreTroubleshoot"
 import { Routes } from "@/routes"
-import {
-  Card,
-  CardBody,
-  CardHeader,
-  Divider,
-  HStack,
-  Text,
-  ComponentWithAs,
-  IconProps,
-  VStack,
-  useColorModeValue,
-} from "@chakra-ui/react"
-import { ManagementV1DevPodWorkspaceTemplate } from "@loft-enterprise/client/gen/models/managementV1DevPodWorkspaceTemplate"
-import { useCallback, useMemo, ReactElement, ReactNode, cloneElement } from "react"
+import { Card, CardBody, CardHeader, useColorModeValue } from "@chakra-ui/react"
+import { useCallback, useMemo } from "react"
 import { useNavigate } from "react-router"
 import { WorkspaceCardHeader } from "./WorkspaceCardHeader"
-import { WorkspaceStatus } from "./WorkspaceStatus"
-import { useStoreTroubleshoot } from "@/lib/useStoreTroubleshoot"
+import { WorkspaceDetails } from "./WorkspaceDetails"
+import { useTemplate } from "./useTemplate"
 
 type TWorkspaceInstanceCardProps = Readonly<{
   host: string
   instanceName: string
+  isSelected?: boolean
+  onSelectionChange?: (isSelected: boolean) => void
 }>
 
-export function WorkspaceInstanceCard({ instanceName, host }: TWorkspaceInstanceCardProps) {
-  const hoverColor = useColorModeValue("gray.50", "gray.800")
-  const { data: templates } = useTemplates()
+export function WorkspaceInstanceCard({
+  instanceName,
+  host,
+  isSelected,
+  onSelectionChange,
+}: TWorkspaceInstanceCardProps) {
+  const bgColor = useColorModeValue("white", "gray.900")
+  const hoverBorderColor = useColorModeValue("primary.600", "primary.300")
   const workspace = useWorkspace<ProWorkspaceInstance>(instanceName)
   const instance = workspace.data
   const instanceDisplayName = getDisplayName(instance)
   const workspaceActions = useWorkspaceActions(instance?.id)
+  const { data: projectClusters } = useProjectClusters()
 
   const navigate = useNavigate()
 
@@ -72,8 +72,9 @@ export function WorkspaceInstanceCard({ instanceName, host }: TWorkspaceInstance
       (close) => {
         workspace.rebuild()
         close()
+        instance?.id && navigate(Routes.toProWorkspace(host, instance.id))
       },
-      [workspace]
+      [workspace, navigate, host, instance]
     )
   )
 
@@ -83,33 +84,13 @@ export function WorkspaceInstanceCard({ instanceName, host }: TWorkspaceInstance
       (close) => {
         workspace.reset()
         close()
+        instance?.id && navigate(Routes.toProWorkspace(host, instance.id))
       },
-      [workspace]
+      [workspace, navigate, host, instance]
     )
   )
 
   const { store: storeTroubleshoot } = useStoreTroubleshoot()
-
-  const { parameters, template } = useMemo<{
-    parameters: readonly TParameterWithValue[]
-    template: ManagementV1DevPodWorkspaceTemplate | undefined
-  }>(() => {
-    // find template for workspace
-    const currentTemplate = templates?.workspace.find(
-      (template) => instance?.spec?.templateRef?.name === template.metadata?.name
-    )
-    const empty = { parameters: [], template: undefined }
-    if (!currentTemplate || !instance) {
-      return empty
-    }
-
-    const parameters = getParametersWithValues(instance, currentTemplate)
-    if (!parameters) {
-      return empty
-    }
-
-    return { parameters, template: currentTemplate }
-  }, [instance, templates])
 
   const handleTroubleshootClicked = useCallback(() => {
     if (instance && workspaceActions) {
@@ -129,8 +110,21 @@ export function WorkspaceInstanceCard({ instanceName, host }: TWorkspaceInstance
     navigate(Routes.toProWorkspace(host, instance.id))
   }
 
-  const templateRef = instance.spec?.templateRef
-  const isRunning = instance.status?.lastWorkspaceStatus === "Running" // TODO: Types
+  const cluster = useMemo(() => {
+    if (instance?.spec?.runnerRef?.runner) {
+      return projectClusters?.runners?.find(
+        (runner) => runner.metadata?.name === instance?.spec?.runnerRef?.runner
+      )
+    }
+
+    return projectClusters?.clusters?.find(
+      (cluster) => cluster.metadata?.name === instance?.spec?.target?.cluster?.name
+    )
+  }, [projectClusters, instance])
+
+  const { template, parameters } = useTemplate(instance)
+
+  const isRunning = instance.status?.lastWorkspaceStatus === "Running"
 
   return (
     <>
@@ -140,64 +134,34 @@ export function WorkspaceInstanceCard({ instanceName, host }: TWorkspaceInstance
         variant="outline"
         marginBottom="3"
         paddingLeft="2"
-        _hover={{ bgColor: hoverColor, cursor: "pointer" }}
+        bg={bgColor}
+        _hover={{ borderColor: hoverBorderColor, cursor: "pointer" }}
         boxShadow="0px 2px 4px 0px rgba(0, 0, 0, 0.07)"
         onClick={() => navigate(Routes.toProWorkspace(host, instance.id))}>
-        <CardHeader overflow="hidden" w="full">
-          <WorkspaceCardHeader instance={instance}>
+        <CardHeader overflow="hidden" w="full" pb="2">
+          <WorkspaceCardHeader
+            showSelection={true}
+            isSelected={isSelected}
+            onSelectionChange={onSelectionChange}
+            instance={instance}>
             <WorkspaceCardHeader.Controls
               onOpenClicked={handleOpenClicked}
               onDeleteClicked={openDeleteModal}
               onRebuildClicked={openRebuildModal}
               onResetClicked={openResetModal}
-              onStopClicked={isRunning ? openStopModal : workspace.stop}
+              onStopClicked={!isRunning ? openStopModal : workspace.stop}
               onTroubleshootClicked={handleTroubleshootClicked}
             />
           </WorkspaceCardHeader>
         </CardHeader>
-        <CardBody pt="0">
-          <HStack gap="6" align="start">
-            <WorkspaceInfoDetail icon={Status} label={<Text>Status</Text>}>
-              <WorkspaceStatus status={instance.status} />
-            </WorkspaceInfoDetail>
-
-            <WorkspaceInfoDetail icon={Status} label={<Text>Template</Text>}>
-              <Text>
-                {getDisplayName(template, templateRef?.name)}/{templateRef?.version || "latest"}
-              </Text>
-            </WorkspaceInfoDetail>
-
-            {parameters.length > 0 && (
-              <>
-                <Divider orientation="vertical" mx="2" h="12" borderColor="gray.400" />
-
-                {parameters.map((param) => {
-                  let label = param.label
-                  if (!label) {
-                    label = param.variable
-                  }
-
-                  let value = param.value ?? param.defaultValue ?? ""
-                  if (param.type === "boolean") {
-                    if (value) {
-                      value = "true"
-                    } else {
-                      value = "false"
-                    }
-                  }
-
-                  return (
-                    <WorkspaceInfoDetail
-                      key={param.variable}
-                      icon={CogOutlined}
-                      label={<Text>{label}</Text>}>
-                      <Text>{value}</Text>
-                    </WorkspaceInfoDetail>
-                  )
-                })}
-              </>
-            )}
-          </HStack>
+        <CardBody py="0">
+          <WorkspaceDetails
+            instance={instance}
+            template={template}
+            cluster={cluster}
+            parameters={parameters}
+            showDetails={false}
+          />
         </CardBody>
       </Card>
 
@@ -206,24 +170,5 @@ export function WorkspaceInstanceCard({ instanceName, host }: TWorkspaceInstance
       {deleteModal}
       {stopModal}
     </>
-  )
-}
-
-type TWorkspaceInfoDetailProps = Readonly<{
-  icon: ComponentWithAs<"svg", IconProps>
-  label: ReactElement
-  children: ReactNode
-}>
-function WorkspaceInfoDetail({ icon: Icon, label, children }: TWorkspaceInfoDetailProps) {
-  const l = cloneElement(label, { color: "gray.500", fontWeight: "medium", fontSize: "sm" })
-
-  return (
-    <VStack align="start" gap="1" color="gray.700">
-      <HStack gap="1">
-        <Icon boxSize={4} color="gray.500" />
-        {l}
-      </HStack>
-      {children}
-    </VStack>
   )
 }

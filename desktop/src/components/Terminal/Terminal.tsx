@@ -40,18 +40,23 @@ export const Terminal = forwardRef<TTerminalRef, TTerminalProps>(function T(
   const terminalRef = useRef<XTermTerminal | null>(null)
   const termFitRef = useRef<FitAddon | null>(null)
 
-  const backgroundColor = useToken("colors", "gray.900")
+  const backgroundColorToken = useColorModeValue("gray.900", "background.darkest")
+  const backgroundColor = useToken("colors", backgroundColorToken)
   const textColor = useToken("colors", "gray.100")
 
   const scrollBarThumbToken = useColorModeValue("gray.500", "gray.200")
   const scrollBarThumbColor = useToken("colors", scrollBarThumbToken)
 
+  const selectionBackgroundToken = useColorModeValue("gray.600", "gray.600")
+  const selectionBackgroundColor = useToken("colors", selectionBackgroundToken)
+
   const terminalTheme = useMemo<Partial<IXTermTheme>>(
     () => ({
       background: backgroundColor,
       foreground: textColor,
+      selectionBackground: selectionBackgroundColor,
     }),
-    [backgroundColor, textColor]
+    [backgroundColor, selectionBackgroundColor, textColor]
   )
 
   useLayoutEffect(() => {
@@ -68,11 +73,9 @@ export const Terminal = forwardRef<TTerminalRef, TTerminalProps>(function T(
       })
       terminalRef.current = terminal
 
-      terminal.onKey((key) => {
-        if (terminal.hasSelection() && key.domEvent.ctrlKey && key.domEvent.key === "c") {
-          document.execCommand("copy")
-        }
-      })
+      terminal.attachCustomKeyEventHandler(event => {
+        return !(event.type === "keydown" && event.key === "c" && event.ctrlKey);
+      });
 
       const loadAddon = <T extends ITerminalAddon>(
         AddonClass: new () => T,
@@ -150,7 +153,6 @@ export const Terminal = forwardRef<TTerminalRef, TTerminalProps>(function T(
   }, [terminalTheme])
 
   useEffect(() => {
-    // TODO: resize when global font size changes
     let maybeFontSize = terminalRef.current?.options.fontSize
     if (exists(maybeFontSize)) {
       maybeFontSize = remToPx(fontSize)
@@ -214,7 +216,7 @@ export const Terminal = forwardRef<TTerminalRef, TTerminalProps>(function T(
         as="div"
         backgroundColor={terminalTheme.background}
         borderRadius={borderRadius ?? "md"}
-        borderWidth={8}
+        borderWidth={6}
         boxSizing="content-box" // needs to be set to accommodate for the way xterm measures it's container
         borderColor={terminalTheme.background}
         ref={containerRef}

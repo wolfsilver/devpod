@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/loft-sh/devpod/cmd/flags"
+	"github.com/loft-sh/devpod/pkg/config"
 	"github.com/loft-sh/devpod/pkg/devcontainer"
 	"github.com/loft-sh/log"
 	"github.com/sirupsen/logrus"
@@ -35,13 +36,18 @@ func NewGetWorkspaceConfigCommand(flags *flags.GlobalFlags) *cobra.Command {
 	shellCmd := &cobra.Command{
 		Use:   "get-workspace-config",
 		Short: "Retrieves a workspace config",
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cobraCmd *cobra.Command, args []string) error {
+			devPodConfig, err := config.LoadConfig(cmd.Context, cmd.Provider)
+			if err != nil {
+				return err
+			}
+
 			if cmd.maxDepth < 0 {
 				log.Default.Debugf("--max-depth was %d, setting to 0", cmd.maxDepth)
 				cmd.maxDepth = 0
 			}
 
-			return cmd.Run(context.Background(), args)
+			return cmd.Run(cobraCmd.Context(), devPodConfig, args)
 		},
 	}
 
@@ -51,7 +57,7 @@ func NewGetWorkspaceConfigCommand(flags *flags.GlobalFlags) *cobra.Command {
 	return shellCmd
 }
 
-func (cmd *GetWorkspaceConfigCommand) Run(ctx context.Context, args []string) error {
+func (cmd *GetWorkspaceConfigCommand) Run(ctx context.Context, devPodConfig *config.Config, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("workspace source is missing")
 	}
@@ -61,7 +67,10 @@ func (cmd *GetWorkspaceConfigCommand) Run(ctx context.Context, args []string) er
 	if cmd.GlobalFlags.Debug {
 		level = logrus.DebugLevel
 	}
-	logger := log.NewStdoutLogger(os.Stdin, nil, nil, level)
+	var logger log.Logger = log.NewStdoutLogger(os.Stdin, os.Stdout, os.Stderr, level)
+	if os.Getenv("DEVPOD_UI") == "true" {
+		logger = log.Discard
+	}
 	logger.Debugf("Resolving devcontainer config for source: %s", rawSource)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cmd.timeout)
@@ -78,7 +87,7 @@ func (cmd *GetWorkspaceConfigCommand) Run(ctx context.Context, args []string) er
 		_ = os.RemoveAll(tmpDir)
 	}()
 	go func() {
-		result, err := devcontainer.FindDevcontainerFiles(ctx, rawSource, tmpDir, cmd.maxDepth, logger)
+		result, err := devcontainer.FindDevcontainerFiles(ctx, rawSource, tmpDir, cmd.maxDepth, devPodConfig.ContextOption(config.ContextOptionSSHStrictHostKeyChecking) == "true", logger)
 		if err != nil {
 			errChan <- err
 			return
@@ -96,7 +105,7 @@ func (cmd *GetWorkspaceConfigCommand) Run(ctx context.Context, args []string) er
 		if err != nil {
 			return err
 		}
-		log.Default.Done(string(out))
+		fmt.Println(string(out))
 	}
 	defer close(done)
 

@@ -31,7 +31,7 @@ func (c *CombinedLogger) log(level logrus.Level, logFunc func(logLib.Logger)) {
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	if level < c.level {
+	if level > c.level {
 		return
 	}
 
@@ -145,6 +145,14 @@ func (c *CombinedLogger) WriteString(level logrus.Level, message string) {
 	c.log(level, func(logger logLib.Logger) {
 		logger.WriteString(level, message)
 	})
+}
+
+func (c *CombinedLogger) WriteLevel(level logrus.Level, message []byte) (int, error) {
+	c.log(level, func(logger logLib.Logger) {
+		_, _ = logger.WriteLevel(level, message)
+	})
+
+	return len(message), nil
 }
 
 func (c *CombinedLogger) Question(params *survey.QuestionOptions) (string, error) {

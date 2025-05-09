@@ -15,6 +15,7 @@ import (
 	"github.com/loft-sh/devpod/pkg/platform/project"
 	provider2 "github.com/loft-sh/devpod/pkg/provider"
 	"github.com/loft-sh/devpod/pkg/random"
+	"github.com/loft-sh/devpod/pkg/workspace"
 	"github.com/loft-sh/log"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -94,7 +95,7 @@ func (cmd *ImportCmd) Run(ctx context.Context, args []string) error {
 		cmd.WorkspaceId = newWorkspaceId
 	}
 
-	provider, err := platform.ProviderFromHost(ctx, devPodConfig, devPodProHost, cmd.log)
+	provider, err := workspace.ProviderFromHost(ctx, devPodConfig, devPodProHost, cmd.log)
 	if err != nil {
 		return fmt.Errorf("resolve provider: %w", err)
 	}
@@ -144,8 +145,9 @@ func (cmd *ImportCmd) writeNewWorkspaceDefinition(devPodConfig *config.Config, i
 		Context:  devPodConfig.DefaultContext,
 		Imported: !cmd.Own,
 		Pro: &provider2.ProMetadata{
-			Project:     project.ProjectFromNamespace(instance.Namespace),
-			DisplayName: instance.Spec.DisplayName,
+			InstanceName: instance.GetName(),
+			Project:      project.ProjectFromNamespace(instance.Namespace),
+			DisplayName:  instance.Spec.DisplayName,
 		},
 	}
 
@@ -163,8 +165,9 @@ func (cmd *ImportCmd) writeWorkspaceDefinition(devPodConfig *config.Config, prov
 		Context:  devPodConfig.DefaultContext,
 		Imported: !cmd.Own,
 		Pro: &provider2.ProMetadata{
-			Project:     instanceOpts[platform.ProjectEnv],
-			DisplayName: instance.Spec.DisplayName,
+			InstanceName: instance.GetName(),
+			Project:      instanceOpts[platform.ProjectEnv],
+			DisplayName:  instance.Spec.DisplayName,
 		},
 	}
 
@@ -193,8 +196,9 @@ func resolveInstanceOptions(ctx context.Context, instance *managementv1.DevPodWo
 	if instance.Spec.TemplateRef == nil {
 		return opts, nil
 	}
+	//nolint:all
 	if instance.Spec.RunnerRef.Runner != "" {
-		opts[platform.RunnerEnv] = instance.Spec.RunnerRef.Runner
+		opts[platform.RunnerEnv] = instance.Spec.RunnerRef.Runner //nolint:all
 	}
 	opts[platform.TemplateOptionEnv] = instance.Spec.TemplateRef.Name
 

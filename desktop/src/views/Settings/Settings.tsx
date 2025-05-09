@@ -21,8 +21,8 @@ import {
   Text,
   VStack,
   useColorMode,
-  useColorModeValue,
 } from "@chakra-ui/react"
+import { compareVersions } from "compare-versions"
 import { ReactNode, useEffect, useMemo, useState } from "react"
 import { HiMagnifyingGlassPlus } from "react-icons/hi2"
 import { client } from "../../client"
@@ -52,7 +52,6 @@ import {
   useProxyOptions,
   useSSHKeySignatureOption,
 } from "./useSettingsOptions"
-import { compareVersions } from "compare-versions"
 
 const SETTINGS_TABS = [
   { label: "General", component: <GeneralSettings /> },
@@ -122,6 +121,12 @@ function GeneralSettings() {
           isChecked={settings.debugFlag}
           onChange={(e) => set("debugFlag", e.target.checked)}
         />
+      </SettingSection>
+
+      <SettingSection title="Logs" description={"Open the logs for DevPod Desktop"}>
+        <Button variant="outline" onClick={() => client.openDir("AppLog")}>
+          Open Logs
+        </Button>
       </SettingSection>
 
       <SettingSection title="Agent URL" description={agentURLHelpText}>
@@ -274,7 +279,7 @@ function UpdateSettings() {
   const { isChecking, check, isUpdateAvailable, pendingUpdate } = useUpdate()
   const releases = useReleases()
     ?.slice()
-    .sort((a, b) => compareVersions(a.tag_name, b.tag_name))
+    .sort((a, b) => compareVersions(b.tag_name, a.tag_name))
   const downloadLink = useMemo(() => {
     const release = releases?.find((release) => release.tag_name === selectedVersion)
     if (!release) {
@@ -411,16 +416,6 @@ function ExperimentalSettings() {
 
         <HStack width="full" align="center">
           <Switch
-            isChecked={settings.experimental_jupyterDesktop}
-            onChange={(e) => set("experimental_jupyterDesktop", e.target.checked)}
-          />
-          <FormLabel marginBottom="0" whiteSpace="nowrap" fontSize="sm">
-            Jupyter Desktop
-          </FormLabel>
-        </HStack>
-
-        <HStack width="full" align="center">
-          <Switch
             isChecked={settings.experimental_vscodeInsiders}
             onChange={(e) => set("experimental_vscodeInsiders", e.target.checked)}
           />
@@ -436,16 +431,6 @@ function ExperimentalSettings() {
           />
           <FormLabel marginBottom="0" whiteSpace="nowrap" fontSize="sm">
             Cursor
-          </FormLabel>
-        </HStack>
-
-        <HStack width="full" align="center">
-          <Switch
-            isChecked={settings.experimental_marimo}
-            onChange={(e) => set("experimental_marimo", e.target.checked)}
-          />
-          <FormLabel marginBottom="0" whiteSpace="nowrap" fontSize="sm">
-            Marimo
           </FormLabel>
         </HStack>
 
@@ -476,6 +461,26 @@ function ExperimentalSettings() {
           />
           <FormLabel marginBottom="0" whiteSpace="nowrap" fontSize="sm">
             Zed
+          </FormLabel>
+        </HStack>
+
+        <HStack width="full" align="center">
+          <Switch
+            isChecked={settings.experimental_rstudio}
+            onChange={(e) => set("experimental_rstudio", e.target.checked)}
+          />
+          <FormLabel marginBottom="0" whiteSpace="nowrap" fontSize="sm">
+            RStudio Server
+          </FormLabel>
+        </HStack>
+
+        <HStack width="full" align="center">
+          <Switch
+            isChecked={settings.experimental_windsurf}
+            onChange={(e) => set("experimental_windsurf", e.target.checked)}
+          />
+          <FormLabel marginBottom="0" whiteSpace="nowrap" fontSize="sm">
+            Windsurf
           </FormLabel>
         </HStack>
       </SettingSection>
@@ -514,10 +519,8 @@ function ExperimentalSettings() {
 
 type TSettingDescriptionProps = Readonly<{ children: ReactNode }>
 function SettingDescription({ children }: TSettingDescriptionProps) {
-  const descriptionColor = useColorModeValue("gray.500", "gray.400")
-
   return (
-    <Text color={descriptionColor} fontSize="sm">
+    <Text color={"gray.600"} _dark={{ color: "gray.300" }} fontSize="sm">
       {children}
     </Text>
   )

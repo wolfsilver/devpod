@@ -165,7 +165,7 @@ jobs:
         if: matrix.settings.host != 'windows-latest'
         run: |
           BIN_NAME=devpod-cli-${{ matrix.settings.target }}
-          GOOS=${{ matrix.settings.os }} GOARCH=${{ matrix.settings.arch }} CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/loft-sh/devpod/pkg/version.version="v${{ needs.create-release.outputs.original_package_version }}" -X github.com/loft-sh/devpod/pkg/telemetry.telemetryPrivateKey=${{ secrets.DEVPOD_TELEMETRY_PRIVATE_KEY }}" -o "test/$BIN_NAME"
+          GOOS=${{ matrix.settings.os }} GOARCH=${{ matrix.settings.arch }} CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/loft-sh/devpod/pkg/version.version="v${{ needs.create-release.outputs.original_package_version }}" -X github.com/loft-sh/devpod/pkg/telemetry.telemetryPrivateKey=${{ secrets.DEVPOD_TELEMETRY_PRIVATE_KEY }} -X github.com/loft-sh/devpod/pkg/devcontainer/crane.craneSigningKey="${{ secrets.CRANE_PRIVATE_KEY }}"" -o "test/$BIN_NAME"
           cp "test/$BIN_NAME" "desktop/src-tauri/bin/$BIN_NAME"
           ls desktop/src-tauri/bin
 
@@ -206,7 +206,7 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           projectPath: "./desktop"
-          args: "--config src-tauri/tauri-linux.conf.json --target ${{ matrix.settings.target }} --bundles appimage,deb,updater"
+          args: "--config src-tauri/tauri-flatpak.conf.json --target ${{ matrix.settings.target }} --bundles appimage,deb,updater"
           includeUpdaterJson: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -241,6 +241,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          CI: false # https://github.com/tauri-apps/tauri-action/issues/740
 
       - name: Build linux tar.gz
         if: matrix.settings.host == 'ubuntu-22.04' && matrix.settings.cli_only == false
@@ -250,6 +251,33 @@ jobs:
           tar --exclude=usr/bin/xdg-open --exclude=usr/lib --exclude=usr/share/doc --exclude=usr/share/glib-2.0 -zcvf DevPod-desktop.tar.gz usr
 
           mv DevPod-desktop.tar.gz ../../DevPod-${{needs.create-release.outputs.package_version}}.tar.gz
+
+      - name: Prepare Windows Signing Tool
+        if: matrix.settings.host == 'windows-latest' && matrix.settings.cli_only == false
+        run: |
+          $destination_path = "$Env:USERPROFILE\code-signing"
+          $download_url = "$Env:CODESIGNTOOL_DOWNLOAD_URL"
+
+          # Create the directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path $destination_path | Out-Null
+          Write-Output "Starting to download CodeSignTool from $download_url"
+
+          Invoke-WebRequest -Uri $download_url -OutFile codesigntool.zip
+
+          Write-Output "Unzipping codesigntool.zip to $destination_path"
+          Expand-Archive "codesigntool.zip" -DestinationPath $destination_path
+
+          Add-Content -Path $env:GITHUB_PATH -Value $destination_path
+          # This is requried in addition to setting the PATH because of how CodeSignTool wrote their batch script
+          "CODE_SIGN_TOOL_PATH=$destination_path" | Out-File -FilePath $env:GITHUB_ENV -Append
+        env:
+          CODESIGNTOOL_DOWNLOAD_URL: ${{ vars.CODESIGNTOOL_DOWNLOAD_URL }}
+
+      - name: Print Signing Tool Version
+        if: matrix.settings.host == 'windows-latest' && matrix.settings.cli_only == false
+        run: |
+          Write-Output "Attempting to get CodeSignTool version"
+          CodeSignTool.bat --version
 
       - name: Build Desktop App
         if: matrix.settings.host == 'windows-latest' && matrix.settings.cli_only == false
@@ -264,8 +292,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          CODESIGNTOOL_USERNAME: ${{ secrets.CODESIGNTOOL_USERNAME }}
+          CODESIGNTOOL_PASSWORD: ${{ secrets.CODESIGNTOOL_PASSWORD }}
+          CODESIGNTOOL_TOTP_SECRET: ${{ secrets.CODESIGNTOOL_TOTP_SECRET }}
+          CODESIGNTOOL_CREDENTIAL_ID: ${{ secrets.CODESIGNTOOL_CREDENTIAL_ID }}
 
-      - name: Sign Windows App
+      - name: Sign Windows Sidecar Binary
         if: matrix.settings.host == 'windows-latest'
         shell: powershell
         env:
@@ -273,65 +305,17 @@ jobs:
           CODESIGNTOOL_PASSWORD: ${{ secrets.CODESIGNTOOL_PASSWORD }}
           CODESIGNTOOL_TOTP_SECRET: ${{ secrets.CODESIGNTOOL_TOTP_SECRET }}
           CODESIGNTOOL_CREDENTIAL_ID: ${{ secrets.CODESIGNTOOL_CREDENTIAL_ID }}
-          CODESIGNTOOL_DOWNLOAD_URL: ${{ vars.CODESIGNTOOL_DOWNLOAD_URL }}
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         run: |
           $username = "$Env:CODESIGNTOOL_USERNAME"
           $password = "$Env:CODESIGNTOOL_PASSWORD"
           $totp_secret = "$Env:CODESIGNTOOL_TOTP_SECRET"
           $credential_id = "$Env:CODESIGNTOOL_CREDENTIAL_ID"
-          $download_url = "$Env:CODESIGNTOOL_DOWNLOAD_URL"
-          $private_key = "$Env:TAURI_PRIVATE_KEY"
-          $private_key_password = "$Env:TAURI_KEY_PASSWORD"
 
           $cli_input_file_path = "desktop\src-tauri\bin\devpod-cli-${{ matrix.settings.target }}.exe"
 
-          $msi_file_name = "DevPod_${{ needs.create-release.outputs.package_version }}_x64_en-US"
-          $msi_input_file_path = "desktop\src-tauri\target\${{ matrix.settings.target }}\release\bundle\msi\$msi_file_name.msi"
-
-          $updater_base_zip_file_path = "src-tauri\target\${{ matrix.settings.target }}\release\bundle\msi\$msi_file_name.msi.zip"
-          $updater_zip_file_path = "desktop\$updater_base_zip_file_path"
-          $updater_extraction_folder_path = "desktop\src-tauri\target\${{ matrix.settings.target }}\release\bundle\msi\updater"
-          $updater_input_file_path = "$updater_extraction_folder_path\$msi_file_name.msi"
-
-          $nsis_input_file_path = "desktop\src-tauri\target\${{ matrix.settings.target }}\release\bundle\nsis\DevPod_${{ needs.create-release.outputs.package_version }}_x64-setup.exe"
-
-          Write-Output "Starting to download CodeSignTool from $download_url"
-
-          Invoke-WebRequest -Uri $download_url -OutFile codesigntool.zip
-
-          $destination_path = "codesigntool"
-          Write-Output "Unzipping codesigntool.zip to $destination_path"
-          Expand-Archive "codesigntool.zip" -DestinationPath $destination_path
-
-          Write-Output "Unzipping updater: ($updater_zip_file_path) -> ($updater_extraction_folder_path)"
-
-          Expand-Archive "$updater_zip_file_path" -DestinationPath "$updater_extraction_folder_path"
-          Remove-Item "$updater_zip_file_path"
-
-          Set-Location -Path $destination_path
-
-          Write-Output "Sigining files"
-
-          $cli_input_file_path = Resolve-Path  "..\$cli_input_file_path" | select -ExpandProperty Path
-          $msi_input_file_path = Resolve-Path  "..\$msi_input_file_path" | select -ExpandProperty Path
-          $nsis_input_file_path = Resolve-Path  "..\$nsis_input_file_path" | select -ExpandProperty Path
-          $updater_input_file_path = Resolve-Path  "..\$updater_input_file_path" | select -ExpandProperty Path
-
-          cmd.exe /c ".\CodeSignTool.bat" sign -username="$username" -password="$password" -totp_secret="$totp_secret" -credential_id="$credential_id" -input_file_path="$cli_input_file_path" -override
-          cmd.exe /c ".\CodeSignTool.bat" sign -username="$username" -password="$password" -totp_secret="$totp_secret" -credential_id="$credential_id" -input_file_path="$msi_input_file_path" -override
-          cmd.exe /c ".\CodeSignTool.bat" sign -username="$username" -password="$password" -totp_secret="$totp_secret" -credential_id="$credential_id" -input_file_path="$nsis_input_file_path" -override
-          cmd.exe /c ".\CodeSignTool.bat" sign -username="$username" -password="$password" -totp_secret="$totp_secret" -credential_id="$credential_id" -input_file_path="$updater_input_file_path" -override
-
-          Write-Output "Re-compressing updater"
-          Set-Location -Path ".."
-          7z a -tzip -mx=0 "$updater_zip_file_path" ".\$updater_extraction_folder_path\*"
-          Remove-Item "$updater_zip_file_path.sig"
-
-          Write-Output "Re-signing updater zip"
-          Set-Location -Path "desktop"
-          yarn tauri signer sign --password="$private_key_password" --private-key="$private_key" "$updater_base_zip_file_path"
+          Write-Output "Signing files"
+          $cli_input_file_path = Resolve-Path  "$cli_input_file_path" | select -ExpandProperty Path
+          CodeSignTool.bat sign -username="$username" -password="$password" -totp_secret="$totp_secret" -credential_id="$credential_id" -input_file_path="$cli_input_file_path" -override
 
       - name: Upload Release Asset
         if: matrix.settings.host == 'windows-latest'
@@ -447,6 +431,74 @@ jobs:
             })
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload flatpak assets
+        if: matrix.settings.host == 'ubuntu-22.04' && matrix.settings.cli_only == false
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require("fs")
+
+            const releaseId = "${{ needs.create-release.outputs.release_id }}"
+            const assetName = "DevPod.desktop"
+            const assetPath = `desktop/src-tauri/target/${{ matrix.settings.target }}/release/bundle/deb/DevPod_${{needs.create-release.outputs.package_version}}_amd64/data/usr/share/applications/${assetName}`
+
+            console.log("Attempting to upload release asset: ", assetName)
+
+            await github.rest.repos.uploadReleaseAsset({
+              headers: {
+                "content-type": "application/zip",
+                "content-length": fs.statSync(assetPath).size
+              },
+              name: assetName,
+              data: fs.readFileSync(assetPath),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId
+            })
+
+            const mdAssetName = "DevPod.metainfo.xml"
+            const mdAssetPath = `desktop/flatpak/${mdAssetName}`
+
+            console.log("Attempting to upload release asset: ", mdAssetName)
+
+            await github.rest.repos.uploadReleaseAsset({
+              headers: {
+                "content-type": "application/zip",
+                "content-length": fs.statSync(mdAssetPath).size
+              },
+              name: mdAssetName,
+              data: fs.readFileSync(mdAssetPath),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId
+            })
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate updated flatpak manifest
+        if: matrix.settings.host == 'ubuntu-22.04' && matrix.settings.cli_only == false
+        run: |
+          export VERSION="${{needs.create-release.outputs.package_version}}"
+          export debPath="desktop/src-tauri/target/${{ matrix.settings.target }}/release/bundle/deb/DevPod_${{needs.create-release.outputs.package_version}}_amd64.deb"
+          export desktopPath="desktop/src-tauri/target/${{ matrix.settings.target }}/release/bundle/deb/DevPod_${{needs.create-release.outputs.package_version}}_amd64/data/usr/share/applications/${assetName}/DevPod.desktop"
+          export metaPath="desktop/flatpak/DevPod.metainfo.xml"
+          export SHA256=$(sha256sum "${debPath}" | cut -f1 -d ' ')
+          export DESKTOP_SHA256=$(sha256sum "${desktopPath}" | cut -f1 -d ' ')
+          export META_SHA256=$(sha256sum "${metaPath}" | cut -f1 -d ' ')
+          envsubst < desktop/flatpak/sh.loft.devpod.tmpl > desktop/flatpak/sh.loft.devpod.yaml
+
+      # - name: Updates flatpak manifest in flathub
+      #   uses: dmnemec/copy_file_to_another_repo_action@master
+      #   env:
+      #     API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
+      #   with:
+      #     source_file: 'desktop/flatpak/sh.loft.DevPod.yaml'
+      #     destination_repo: 'flathub/sh.loft.DevPod'
+      #     destination_folder: ''
+      #     user_email: 'bot@loft.sh'
+      #     user_name: 'loftbot'
+      #     commit_message: 'Update flatpak manifest with latest release'
 
   publish-updates:
     needs: [build-app, create-release]

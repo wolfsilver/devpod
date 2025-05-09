@@ -1,4 +1,8 @@
+import { QueryKeys } from "@/queryKeys"
+import { TProInstance } from "@/types"
 import {
+  Button,
+  HStack,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -6,9 +10,11 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Text,
   useDisclosure,
   useToast,
 } from "@chakra-ui/react"
+import { useQuery } from "@tanstack/react-query"
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { matchPath, useNavigate } from "react-router"
@@ -21,11 +27,9 @@ import {
   useProInstances,
   useWorkspaceStore,
 } from "../contexts"
-import { exists, useLoginProModal } from "../lib"
+import { exists, hasCapability, useLoginProModal } from "../lib"
 import { Routes } from "../routes"
 import { useChangelogModal } from "./useChangelogModal"
-import { useQuery } from "@tanstack/react-query"
-import { QueryKeys } from "@/queryKeys"
 
 export function useAppReady() {
   const [[proInstances]] = useProInstances()
@@ -51,9 +55,12 @@ export function useAppReady() {
       // we don't really care about the result in the context of the GUI, just need to make sure it's updating
       await Promise.allSettled(
         proInstances
-          .filter((instance) => instance.provider && instance.host)
+          .filter(
+            (instance) =>
+              instance.provider && instance.host && hasCapability(instance, "update-provider")
+          )
           .map(async (instance) => {
-            const proClient = client.getProClient(instance.host!)
+            const proClient = client.getProClient(instance)
             const checkUpdateRes = await proClient.checkUpdate()
             if (checkUpdateRes.err) {
               client.log(
@@ -108,6 +115,14 @@ export function useAppReady() {
   const handleMessage: Parameters<typeof client.subscribe>[1] = useCallback(
     async (event) => {
       if (event.type === "ShowDashboard") {
+        if (await getCurrentWebviewWindow().isMinimized()) {
+          await getCurrentWebviewWindow().unminimize()
+        }
+
+        if (!(await getCurrentWebviewWindow().isVisible())) {
+          await getCurrentWebviewWindow().show()
+        }
+
         await getCurrentWebviewWindow().setFocus()
 
         return
@@ -115,6 +130,7 @@ export function useAppReady() {
 
       if (event.type === "ShowToast") {
         await getCurrentWebviewWindow().setFocus()
+
         toast({
           title: event.title,
           description: event.message,
@@ -133,6 +149,43 @@ export function useAppReady() {
           .map(([key, value]) => `${key}: ${value}`)
           .join("\n")
         setFailedMessage(message)
+
+        return
+      }
+
+      if (event.type === "LoginRequired") {
+        const proInstances = await client.pro.listProInstances()
+        if (proInstances.err) {
+          return
+        }
+        const existingInstance = proInstances.val.find((i) => i.host === event.host)
+        if (!existingInstance) {
+          return
+        }
+
+        await getCurrentWebviewWindow().setFocus()
+        const match = matchPath(Routes.toProInstance(event.host), location.pathname)
+        if (match != null) {
+          // only show toast if we're not on pro instance page anyway
+          return
+        }
+        toast({
+          title: "Login Required",
+          description: (
+            <HStack>
+              <Text>You have been logged out. Please log back in.</Text>
+              <Button
+                ml="2"
+                variant="ghost"
+                onClick={() => navigate(Routes.toProInstance(event.host))}>
+                Log in
+              </Button>
+            </HStack>
+          ),
+          status: "warning",
+          duration: 5_000,
+          isClosable: true,
+        })
 
         return
       }
@@ -171,8 +224,46 @@ export function useAppReady() {
         return
       }
 
+      if (event.type === "OpenProInstance") {
+        const proInstances = await client.pro.listProInstances()
+        if (proInstances.err) {
+          return
+        }
+
+        const existingInstance = proInstances.val.find((i) => i.host === event.host)
+        if (!existingInstance?.host) {
+          return
+        }
+
+        await getCurrentWebviewWindow().setFocus()
+        navigate(Routes.toProInstance(existingInstance.host))
+
+        return
+      }
+
       if (event.type === "ImportWorkspace") {
         await getCurrentWebviewWindow().setFocus()
+        // Do we already know the workspace?
+        let workspacesResult = await client.workspaces.listAll(false)
+        if (workspacesResult.err) {
+          const cleanedMsg = workspacesResult.val.message.split("\n").at(-1) ?? ""
+          setFailedMessage("Failed to list workspaces: " + cleanedMsg)
+
+          return
+        }
+        let maybeWorkspace = workspacesResult.val.find((w) => w.id === event.workspace_id)
+        // Is it a pro workspace?
+        if (maybeWorkspace && maybeWorkspace.provider?.name) {
+          const proInstance = await findProInstance(maybeWorkspace.provider.name)
+          if (proInstance && proInstance.host) {
+            navigate(Routes.toProWorkspace(proInstance.host, maybeWorkspace.id))
+
+            return
+          }
+        }
+
+        // At this point it can't be a new pro workspace anymore,
+        // we'll have to go through the old import flow
         const importResult = await client.pro.importWorkspace({
           workspaceID: event.workspace_id,
           workspaceUID: event.workspace_uid,
@@ -186,11 +277,11 @@ export function useAppReady() {
 
           return
         }
-        const workspacesResult = await client.workspaces.listAll(false)
+        workspacesResult = await client.workspaces.listAll(false)
         if (workspacesResult.err) {
           return
         }
-        const maybeWorkspace = workspacesResult.val.find((w) => w.id === event.workspace_id)
+        maybeWorkspace = workspacesResult.val.find((w) => w.id === event.workspace_id)
         if (!maybeWorkspace) {
           setFailedMessage("Could not find workspace after import")
 
@@ -216,119 +307,109 @@ export function useAppReady() {
         return
       }
 
-      const workspacesResult = await client.workspaces.listAll(false)
-      if (workspacesResult.err) {
-        return
-      }
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (event.type === "OpenWorkspace") {
+        const workspacesResult = await client.workspaces.listAll(false)
+        if (workspacesResult.err) {
+          return
+        }
 
-      // Try to find workspace by source
-      let maybeWorkspace = workspacesResult.val.find((w) => {
-        if (!w.source) {
+        // Try to find workspace by source
+        let maybeWorkspace = workspacesResult.val.find((w) => {
+          if (!w.source) {
+            return false
+          }
+
+          // Check `repo@sha256:commitHash`
+          if (
+            `${w.source.gitRepository ?? ""}${WORKSPACE_SOURCE_COMMIT_DELIMITER}${
+              w.source.gitCommit ?? ""
+            }` === event.source
+          ) {
+            return true
+          }
+
+          // Check `repo@branch`
+          if (
+            `${w.source.gitRepository ?? ""}${WORKSPACE_SOURCE_BRANCH_DELIMITER}${
+              w.source.gitBranch ?? ""
+            }` === event.source
+          ) {
+            return true
+          }
+
+          // Check Git repo
+          if (w.source.gitRepository === event.source) {
+            return true
+          }
+
+          // Check local folder
+          if (w.source.localFolder === event.source) {
+            return true
+          }
+
+          // Check Docker Image
+          if (w.source.image === event.source) {
+            return true
+          }
+
           return false
+        })
+
+        // If we don't have a workspace by now, `source` isn't defined but `workspace_id` is, try to find workspace by ID
+        // This happens for example if the message is triggered by a system tray item
+        // WARN: `event.source` can be an empty string here, hence the falsy check
+        if (maybeWorkspace === undefined && !event.source && exists(event.workspace_id)) {
+          maybeWorkspace = workspacesResult.val.find((w) => w.id === event.workspace_id)
         }
 
-        // Check `repo@sha256:commitHash`
-        if (
-          `${w.source.gitRepository ?? ""}${WORKSPACE_SOURCE_COMMIT_DELIMITER}${
-            w.source.gitCommit ?? ""
-          }` === event.source
-        ) {
-          return true
+        const ides = await client.ides.listAll()
+        let defaultIDE = undefined
+        if (ides.ok) {
+          defaultIDE = ides.val.find((ide) => ide.default)?.name
         }
 
-        // Check `repo@branch`
-        if (
-          `${w.source.gitRepository ?? ""}${WORKSPACE_SOURCE_BRANCH_DELIMITER}${
-            w.source.gitBranch ?? ""
-          }` === event.source
-        ) {
-          return true
-        }
+        const providerName = maybeWorkspace?.provider?.name
+        if (maybeWorkspace !== undefined && providerName) {
+          const proInstance = await findProInstance(providerName)
+          if (proInstance && proInstance.host) {
+            navigate(Routes.toProWorkspace(proInstance.host, maybeWorkspace.id))
 
-        // Check Git repo
-        if (w.source.gitRepository === event.source) {
-          return true
-        }
+            return
+          }
 
-        // Check local folder
-        if (w.source.localFolder === event.source) {
-          return true
-        }
+          const actionID = startWorkspaceAction({
+            workspaceID: maybeWorkspace.id,
+            streamID: viewID,
+            config: {
+              id: maybeWorkspace.id,
+              providerConfig: { providerID: providerName },
+              ideConfig: { name: defaultIDE ?? maybeWorkspace.ide?.name ?? null },
+            },
+            store,
+          })
 
-        // Check Docker Image
-        if (w.source.image === event.source) {
-          return true
-        }
-
-        return false
-      })
-
-      // If we don't have a workspace by now, `source` isn't defined but `workspace_id` is, try to find workspace by ID
-      // This happens for example if the message is triggered by a system tray item
-      // WARN: `event.source` can be an empty string here, hence the falsy check
-      if (maybeWorkspace === undefined && !event.source && exists(event.workspace_id)) {
-        maybeWorkspace = workspacesResult.val.find((w) => w.id === event.workspace_id)
-      }
-
-      const ides = await client.ides.listAll()
-      let defaultIDE = undefined
-      if (ides.ok) {
-        defaultIDE = ides.val.find((ide) => ide.default)?.name
-      }
-
-      const providerName = maybeWorkspace?.provider?.name
-      if (maybeWorkspace !== undefined && providerName) {
-        // find provider for workspace
-        const providersRes = await client.providers.listAll()
-        if (providersRes.err) return
-        const provider = providersRes.val[providerName]
-        if (!provider) return
-
-        // handle pro provider
-        if (provider.isProxyProvider && provider.config?.exec?.proxy?.health) {
-          const proInstanceRes = await client.pro.listProInstances()
-          if (proInstanceRes.err) return
-          const proInstance = proInstanceRes.val.find(
-            (proInstance) => proInstance.provider === providerName
-          )
-          if (!proInstance?.host) return
-
-          navigate(Routes.toProWorkspace(proInstance.host, maybeWorkspace.id))
+          navigate(Routes.toAction(actionID))
 
           return
         }
 
-        const actionID = startWorkspaceAction({
-          workspaceID: maybeWorkspace.id,
-          streamID: viewID,
-          config: {
-            id: maybeWorkspace.id,
-            providerConfig: { providerID: providerName },
-            ideConfig: { name: defaultIDE ?? maybeWorkspace.ide?.name ?? null },
-          },
-          store,
-        })
+        const match = matchPath(Routes.PRO_INSTANCE, location.pathname)
+        if (match && match.params.host) {
+          navigate(Routes.toProWorkspaceCreate(match.params.host))
 
-        navigate(Routes.toAction(actionID))
+          return
+        }
 
-        return
+        navigate(
+          Routes.toWorkspaceCreate({
+            workspaceID: event.workspace_id,
+            providerID: event.provider_id,
+            rawSource: event.source,
+            ide: event.ide,
+          })
+        )
       }
-
-      const match = matchPath(Routes.PRO_INSTANCE, location.pathname)
-      if (match && match.params.host) {
-        navigate(Routes.toProWorkspaceCreate(match.params.host))
-
-        return
-      }
-
-      navigate(
-        Routes.toWorkspaceCreate({
-          workspaceID: event.workspace_id,
-          providerID: event.provider_id,
-          rawSource: event.source,
-          ide: event.ide,
-        })
-      )
     },
     [handleProLogin, navigate, setFailedMessage, setSetting, store, toast, viewID]
   )
@@ -391,4 +472,21 @@ function useErrorModal() {
   }, [onClose, onOpen, failedMessage])
 
   return { modal, handleOpen: onOpen, setFailedMessage }
+}
+
+async function findProInstance(providerName: string): Promise<TProInstance | null> {
+  const providersRes = await client.providers.listAll()
+  if (providersRes.err) return null
+  const provider = providersRes.val[providerName]
+  if (!provider || !provider.isProxyProvider) return null
+
+  // handle pro provider
+  const proInstanceRes = await client.pro.listProInstances()
+  if (proInstanceRes.err) return null
+  const proInstance = proInstanceRes.val.find(
+    (proInstance) => proInstance.provider === providerName
+  )
+  if (!proInstance?.host) return null
+
+  return proInstance
 }

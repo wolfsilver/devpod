@@ -8,22 +8,27 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/blang/semver/v4"
 	"github.com/gofrs/flock"
+	"github.com/loft-sh/api/v4/pkg/devpod"
 	"github.com/loft-sh/devpod/pkg/client"
 	"github.com/loft-sh/devpod/pkg/config"
+	devpodlog "github.com/loft-sh/devpod/pkg/log"
 	"github.com/loft-sh/devpod/pkg/options"
+	platformclient "github.com/loft-sh/devpod/pkg/platform/client"
 	"github.com/loft-sh/devpod/pkg/provider"
 	"github.com/loft-sh/log"
-	"github.com/loft-sh/log/scanner"
 	perrors "github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 )
 
 var (
 	DevPodDebug = "DEVPOD_DEBUG"
+
+	DevPodPlatformOptions = "DEVPOD_PLATFORM_OPTIONS"
 
 	DevPodFlagsUp     = "DEVPOD_FLAGS_UP"
 	DevPodFlagsSsh    = "DEVPOD_FLAGS_SSH"
@@ -164,16 +169,60 @@ func (s *proxyClient) RefreshOptions(ctx context.Context, userOptionsRaw []strin
 	return nil
 }
 
+func (s *proxyClient) Create(ctx context.Context, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+	err := RunCommandWithBinaries(
+		ctx,
+		"createWorkspace",
+		s.config.Exec.Proxy.Create.Workspace,
+		s.workspace.Context,
+		s.workspace,
+		nil,
+		s.devPodConfig.ProviderOptions(s.config.Name),
+		s.config,
+		nil,
+		stdin,
+		stdout,
+		stderr,
+		s.log)
+	if err != nil {
+		return fmt.Errorf("create remote workspace : %w", err)
+	}
+
+	return nil
+}
+
 func (s *proxyClient) Up(ctx context.Context, opt client.UpOptions) error {
-	reader, writer := io.Pipe()
+	writer, _ := devpodlog.PipeJSONStream(s.log.ErrorStreamOnly())
 	defer writer.Close()
-	go func() {
-		readLogStream(reader, s.log.ErrorStreamOnly())
-	}()
 
 	opts := EncodeOptions(opt.CLIOptions, DevPodFlagsUp)
 	if opt.Debug {
 		opts["DEBUG"] = "true"
+	}
+
+	// check if the provider is outdated
+	providerOptions := s.devPodConfig.ProviderOptions(s.config.Name)
+	if providerOptions["LOFT_CONFIG"].Value != "" {
+		baseClient, err := platformclient.InitClientFromPath(ctx, providerOptions["LOFT_CONFIG"].Value)
+		if err != nil {
+			return fmt.Errorf("error initializing platform client: %w", err)
+		}
+
+		version, err := baseClient.Version()
+		if err != nil {
+			return fmt.Errorf("error retrieving platform version: %w", err)
+		}
+
+		// check if the version is lower than v4.3.0-devpod.alpha.19
+		parsedVersion, err := semver.Parse(strings.TrimPrefix(version.DevPodVersion, "v"))
+		if err != nil {
+			return fmt.Errorf("error parsing platform version: %w", err)
+		}
+
+		// if devpod version is greater than 0.7.0 we error here
+		if parsedVersion.GE(semver.MustParse("0.6.99")) {
+			return fmt.Errorf("you are using an outdated provider version for this platform. Please disconnect and reconnect the platform to update the provider")
+		}
 	}
 
 	err := RunCommandWithBinaries(
@@ -183,7 +232,7 @@ func (s *proxyClient) Up(ctx context.Context, opt client.UpOptions) error {
 		s.workspace.Context,
 		s.workspace,
 		nil,
-		s.devPodConfig.ProviderOptions(s.config.Name),
+		providerOptions,
 		s.config,
 		opts,
 		opt.Stdin,
@@ -199,11 +248,8 @@ func (s *proxyClient) Up(ctx context.Context, opt client.UpOptions) error {
 }
 
 func (s *proxyClient) Ssh(ctx context.Context, opt client.SshOptions) error {
-	reader, writer := io.Pipe()
+	writer, _ := devpodlog.PipeJSONStream(s.log.ErrorStreamOnly())
 	defer writer.Close()
-	go func() {
-		readLogStream(reader, s.log.ErrorStreamOnly())
-	}()
 
 	err := RunCommandWithBinaries(
 		ctx,
@@ -231,11 +277,8 @@ func (s *proxyClient) Delete(ctx context.Context, opt client.DeleteOptions) erro
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	reader, writer := io.Pipe()
+	writer, _ := devpodlog.PipeJSONStream(s.log.ErrorStreamOnly())
 	defer writer.Close()
-	go func() {
-		readLogStream(reader, s.log)
-	}()
 
 	var gracePeriod *time.Duration
 	if opt.GracePeriod != "" {
@@ -282,11 +325,8 @@ func (s *proxyClient) Stop(ctx context.Context, opt client.StopOptions) error {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	reader, writer := io.Pipe()
+	writer, _ := devpodlog.PipeJSONStream(s.log.ErrorStreamOnly())
 	defer writer.Close()
-	go func() {
-		readLogStream(reader, s.log)
-	}()
 
 	err := RunCommandWithBinaries(
 		ctx,
@@ -335,7 +375,7 @@ func (s *proxyClient) Status(ctx context.Context, options client.StatusOptions) 
 		return client.StatusNotFound, fmt.Errorf("error retrieving container status: %s%w", buf.String(), err)
 	}
 
-	readLogStream(bytes.NewReader(buf.Bytes()), s.log.ErrorStreamOnly())
+	devpodlog.ReadJSONStream(bytes.NewReader(buf.Bytes()), s.log.ErrorStreamOnly())
 	status := &client.WorkspaceStatus{}
 	err = json.Unmarshal(stdout.Bytes(), status)
 	if err != nil {
@@ -385,30 +425,11 @@ func DecodeOptionsFromEnv(name string, into any) (bool, error) {
 	return true, json.Unmarshal([]byte(raw), into)
 }
 
-func readLogStream(reader io.Reader, logger log.Logger) {
-	scan := scanner.NewScanner(reader)
-	for scan.Scan() {
-		line := scan.Bytes()
-
-		lineObject := &log.Line{}
-		err := json.Unmarshal(line, lineObject)
-		if err == nil && lineObject.Message != "" {
-			switch lineObject.Level {
-			case logrus.TraceLevel:
-				logger.Debug(lineObject.Message)
-			case logrus.DebugLevel:
-				logger.Debug(lineObject.Message)
-			case logrus.InfoLevel:
-				logger.Info(lineObject.Message)
-			case logrus.WarnLevel:
-				logger.Warn(lineObject.Message)
-			case logrus.ErrorLevel:
-				logger.Error(lineObject.Message)
-			case logrus.PanicLevel:
-				logger.Error(lineObject.Message)
-			case logrus.FatalLevel:
-				logger.Error(lineObject.Message)
-			}
-		}
+func DecodePlatformOptionsFromEnv(into *devpod.PlatformOptions) error {
+	raw := os.Getenv(DevPodPlatformOptions)
+	if raw == "" {
+		return nil
 	}
+
+	return json.Unmarshal([]byte(raw), into)
 }

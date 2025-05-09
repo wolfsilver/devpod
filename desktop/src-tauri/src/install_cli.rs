@@ -4,6 +4,8 @@ use std::path::Path;
 use std::str::Lines;
 use std::{env, path::PathBuf};
 use thiserror::Error;
+use std::fs;
+use log::{info,debug};
 
 #[derive(Error, Debug)]
 #[allow(dead_code)]
@@ -91,6 +93,11 @@ fn install(_app_handle: AppHandle, force: bool) -> Result<(), InstallCLIError> {
         // $HOME/.local/bin/devpod
         let mut user_local_bin = home;
         user_local_bin.push(".local/bin/devpod");
+
+        // create .local/bin if necessary
+        if let Some(path) = user_local_bin.clone().parent() {
+            fs::create_dir_all(path);
+        }
 
         target_paths.push(user_local_bin);
         target_paths.push(user_bin);

@@ -29,7 +29,7 @@ func Open(ctx context.Context, workspace, folder string, newWindow bool, flavor 
 }
 
 func openViaBrowser(workspace, folder string, newWindow bool, flavor Flavor, log log.Logger) error {
-	protocol := `vscode://`
+	var protocol string
 	switch flavor {
 	case FlavorStable:
 		protocol = `vscode://`
@@ -41,6 +41,10 @@ func openViaBrowser(workspace, folder string, newWindow bool, flavor Flavor, log
 		protocol = `positron://`
 	case FlavorCodium:
 		protocol = `codium://`
+	case FlavorWindsurf:
+		protocol = `windsurf://`
+	default:
+		return fmt.Errorf("unknown flavor %s", flavor)
 	}
 
 	openURL := protocol + `vscode-remote/ssh-remote+` + workspace + `.devpod/` + folder
@@ -51,7 +55,7 @@ func openViaBrowser(workspace, folder string, newWindow bool, flavor Flavor, log
 	err := open.Run(openURL)
 	if err != nil {
 		log.Debugf("Starting %s caused error: %v", flavor, err)
-		log.Errorf("Seems like you don't have %s installed on your computer locally", flavor)
+		log.Errorf("Seems like you don't have %s installed on your computer locally", flavor.DisplayName())
 		return err
 	}
 
@@ -164,6 +168,16 @@ func findCLI(flavor Flavor) string {
 			return "codium"
 		} else if runtime.GOOS == "darwin" && command.Exists("/Applications/Codium.app/Contents/Resources/app/bin/codium") {
 			return "/Applications/Codium.app/Contents/Resources/app/bin/codium"
+		}
+
+		return ""
+	}
+
+	if flavor == FlavorWindsurf {
+		if command.Exists("windsurf") {
+			return "windsurf"
+		} else if runtime.GOOS == "darwin" && command.Exists("/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf") {
+			return "/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf"
 		}
 
 		return ""

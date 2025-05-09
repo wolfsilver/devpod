@@ -14,6 +14,7 @@ import (
 	"github.com/loft-sh/devpod/e2e/framework"
 	"github.com/loft-sh/devpod/pkg/devcontainer/config"
 	docker "github.com/loft-sh/devpod/pkg/docker"
+	"github.com/loft-sh/log"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/ghttp"
@@ -29,7 +30,7 @@ var _ = DevPodDescribe("devpod up test suite", func() {
 			initialDir, err = os.Getwd()
 			framework.ExpectNoError(err)
 
-			dockerHelper = &docker.DockerHelper{DockerCommand: "docker"}
+			dockerHelper = &docker.DockerHelper{DockerCommand: "docker", Log: log.Default}
 			framework.ExpectNoError(err)
 		})
 
@@ -318,6 +319,10 @@ var _ = DevPodDescribe("devpod up test suite", func() {
 			}, ginkgo.SpecTimeout(framework.GetTimeout()))
 
 			ginkgo.It("should start a new workspace with custom image", func(ctx context.Context) {
+				if runtime.GOOS == "windows" {
+					ginkgo.Skip("skipping on windows")
+				}
+
 				tempDir, err := framework.CopyToTempDir("tests/up/testdata/docker")
 				framework.ExpectNoError(err)
 				ginkgo.DeferCleanup(framework.CleanupTempDir, initialDir, tempDir)
@@ -345,6 +350,7 @@ var _ = DevPodDescribe("devpod up test suite", func() {
 				framework.ExpectEqual(out, expectedOutput, "should match")
 				framework.ExpectNotEqual(out, unexpectedOutput, "should NOT match")
 			}, ginkgo.SpecTimeout(framework.GetTimeout()))
+
 			ginkgo.It("should start a new workspace with custom image and skip building", func(ctx context.Context) {
 				tempDir, err := framework.CopyToTempDir("tests/up/testdata/docker-with-multi-stage-build")
 				framework.ExpectNoError(err)

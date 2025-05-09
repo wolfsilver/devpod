@@ -191,7 +191,7 @@ func (cmd *StartCmd) Run(ctx context.Context) error {
 
 func (cmd *StartCmd) upgrade() error {
 	extraArgs := []string{}
-	if cmd.NoTunnel {
+	if cmd.Host != "" || cmd.NoTunnel {
 		extraArgs = append(extraArgs, "--set-string", "env.DISABLE_LOFT_ROUTER=true")
 	}
 	if cmd.Password != "" {
@@ -199,6 +199,9 @@ func (cmd *StartCmd) upgrade() error {
 	}
 	if cmd.Host != "" {
 		extraArgs = append(extraArgs, "--set", "ingress.enabled=true", "--set", "ingress.host="+cmd.Host)
+		extraArgs = append(extraArgs, "--set", "env.LOFT_HOST="+cmd.Host)
+		extraArgs = append(extraArgs, "--set", "devpodIngress.enabled=true", "--set", "devpodIngress.host=*."+cmd.Host)
+		extraArgs = append(extraArgs, "--set", "env.DEVPOD_SUBDOMAIN=*."+cmd.Host)
 	}
 	if cmd.Version != "" {
 		extraArgs = append(extraArgs, "--version", cmd.Version)
@@ -357,7 +360,7 @@ DevPod Pro was successfully installed and can now be reached at: %s
 Thanks for using DevPod Pro!
 `,
 			ansi.Color(url, "green+b"),
-			ansi.Color("devpod pro login"+" --insecure "+url, "green+b"),
+			ansi.Color("devpod pro login "+url, "green+b"),
 			"https://loft.sh/docs/administration/ssl",
 			url))
 	}

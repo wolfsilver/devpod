@@ -1,10 +1,8 @@
 package git
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 
 	"github.com/loft-sh/log"
 	"github.com/sirupsen/logrus"
@@ -29,6 +27,9 @@ type Option func(*cloner)
 
 func WithCloneStrategy(strategy CloneStrategy) Option {
 	return func(c *cloner) {
+		if strategy == "" {
+			strategy = FullCloneStrategy
+		}
 		c.cloneStrategy = strategy
 	}
 }
@@ -39,8 +40,16 @@ func WithRecursiveSubmodules() Option {
 	}
 }
 
+func WithSkipLFS() Option {
+	return func(c *cloner) {
+		c.skipLFS = true
+	}
+}
+
 func NewClonerWithOpts(options ...Option) Cloner {
-	cloner := &cloner{}
+	cloner := &cloner{
+		cloneStrategy: FullCloneStrategy,
+	}
 	for _, opt := range options {
 		opt(cloner)
 	}
@@ -80,6 +89,7 @@ func (s *CloneStrategy) String() string {
 type cloner struct {
 	extraArgs     []string
 	cloneStrategy CloneStrategy
+	skipLFS       bool
 }
 
 var _ Cloner = &cloner{}
@@ -100,38 +110,30 @@ func (c *cloner) initialArgs() []string {
 	return []string{"clone"}
 }
 
+type progressWriter struct {
+	level logrus.Level
+	log   log.Logger
+}
+
+func (w *progressWriter) Write(p []byte) (n int, err error) {
+	return w.log.WriteLevel(w.level, p)
+}
+
 func (c *cloner) Clone(ctx context.Context, repository string, targetDir string, extraArgs, extraEnv []string, log log.Logger) error {
 	args := c.initialArgs()
 	args = append(args, extraArgs...)
 	args = append(args, c.extraArgs...)
 	args = append(args, repository, targetDir)
-	return run(ctx, args, extraEnv, log)
-}
-
-func run(ctx context.Context, args []string, extraEnv []string, log log.Logger) error {
-	var buf bytes.Buffer
-
 	args = append(args, "--progress")
 
-	gitCommand := CommandContext(ctx, args...)
-	gitCommand.Stdout = &buf
-	gitCommand.Stderr = &buf
-	gitCommand.Env = append(gitCommand.Env, extraEnv...)
-
-	// git always prints progress output to stderr,
-	// we need to check the exit code to decide where the logs should go
-	if err := gitCommand.Run(); err != nil {
-		// report as error
-		if _, err2 := io.Copy(log.Writer(logrus.ErrorLevel, false), &buf); err2 != nil {
-			return err2
-		}
-		return err
+	if c.skipLFS {
+		extraEnv = append(extraEnv, "GIT_LFS_SKIP_SMUDGE=1")
 	}
 
-	// report as debug
-	if _, err := io.Copy(log.Writer(logrus.DebugLevel, false), &buf); err != nil {
-		return err
-	}
+	w := &progressWriter{log: log, level: logrus.InfoLevel}
+	gitCommand := CommandContext(ctx, extraEnv, args...)
+	gitCommand.Stdout = w
+	gitCommand.Stderr = w
 
-	return nil
+	return gitCommand.Run()
 }

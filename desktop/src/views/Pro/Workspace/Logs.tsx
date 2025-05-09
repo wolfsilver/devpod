@@ -1,7 +1,10 @@
 import { TerminalSearchBar, useStreamingTerminal } from "@/components"
+import { TSearchOptions } from "@/components/Terminal/useTerminalSearch"
 import { useAction } from "@/contexts"
 import { useWorkspaceActions } from "@/contexts/DevPodContext/workspaces/useWorkspace"
 import { CheckCircle, ExclamationCircle, ExclamationTriangle } from "@/icons"
+import EmptyImage from "@/images/empty_default.svg"
+import EmptyDarkImage from "@/images/empty_default_dark.svg"
 import { exists, useDownloadLogs } from "@/lib"
 import { Routes } from "@/routes"
 import { DownloadIcon } from "@chakra-ui/icons"
@@ -14,24 +17,33 @@ import {
   Box,
   Button,
   HStack,
+  Heading,
   IconButton,
+  Image,
   LinkBox,
   LinkOverlay,
   Spinner,
   Text,
   Tooltip,
   VStack,
+  useColorMode,
+  useColorModeValue,
 } from "@chakra-ui/react"
 import dayjs from "dayjs"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { HiStop } from "react-icons/hi"
 import { Link as RouterLink, useLocation } from "react-router-dom"
 import { TTabProps } from "./types"
-import { TSearchOptions } from "@/components/Terminal/useTerminalSearch"
+
+const MAX_LOGS = 10
 
 export function Logs({ host, instance }: TTabProps) {
   const [accordionIndex, setAccordionIndex] = useState<number>(0)
-  const actions = useWorkspaceActions(instance.id)
+  const workspaceActions = useWorkspaceActions(instance.id)
+  const actions = useMemo(() => {
+    return workspaceActions?.slice(0, MAX_LOGS)
+  }, [workspaceActions])
+  const { colorMode } = useColorMode()
 
   const location = useLocation()
 
@@ -47,33 +59,46 @@ export function Logs({ host, instance }: TTabProps) {
   }, [actions, location.state?.actionID])
 
   return (
-    <VStack align="start" w="full">
-      <Accordion
-        w="full"
-        allowToggle
-        index={accordionIndex}
-        onChange={(idx) => setAccordionIndex(idx as number)}>
-        {actions?.map((action) => (
-          <AccordionItem mb={"2"} key={action.id} w="full" border={"none"}>
-            {({ isExpanded }) => (
-              <ActionAccordionItem
-                actionID={action.id}
-                isExpanded={isExpanded}
-                host={host}
-                instanceID={instance.id}
-              />
-            )}
-          </AccordionItem>
-        ))}
-      </Accordion>
+    <VStack align="start" w="full" h={"full"}>
+      {!actions?.length ? (
+        <VStack h={"full"} w={"full"} justifyContent={"center"} alignItems={"center"} flexGrow={1}>
+          <Image src={colorMode == "dark" ? EmptyDarkImage : EmptyImage} />
+          <Text
+            fontWeight={"semibold"}
+            fontSize={"sm"}
+            color={"gray.600"}
+            _dark={{ color: "gray.300" }}>
+            No logs to show yet
+          </Text>
+        </VStack>
+      ) : (
+        <Accordion
+          w="full"
+          allowToggle
+          index={accordionIndex}
+          onChange={(idx) => setAccordionIndex(idx as number)}>
+          {actions.map((action) => (
+            <AccordionItem mb={"2"} key={action.id} w="full" border={"none"}>
+              {({ isExpanded }) => (
+                <ActionAccordionItem
+                  actionID={action.id}
+                  isExpanded={isExpanded}
+                  host={host}
+                  instanceID={instance.id}
+                />
+              )}
+            </AccordionItem>
+          ))}
+        </Accordion>
+      )}
     </VStack>
   )
 }
 
 type TActionAccordionItemProps = Readonly<{
+  host: string
   actionID: string
   isExpanded: boolean
-  host: string
   instanceID: string
 }>
 function ActionAccordionItem({
@@ -83,10 +108,15 @@ function ActionAccordionItem({
   isExpanded,
 }: TActionAccordionItemProps) {
   const action = useAction(actionID)
+  const bgColor = useColorModeValue("white", "background.darkest")
+
+  const handleCancelClicked = () => {
+    action?.cancel()
+  }
 
   return action?.data ? (
     <>
-      <h2 role={"heading"}>
+      <Heading as={"h2"}>
         <AccordionButton
           as={LinkBox}
           w="full"
@@ -95,12 +125,11 @@ function ActionAccordionItem({
           gap="2"
           paddingY={2}
           paddingX={3}
-          border={"1px solid"}
+          borderWidth="thin"
           borderRadius="md"
           boxSizing={"border-box"}
-          borderColor={"divider.main"}
           borderBottomRadius={isExpanded ? 0 : undefined}
-          backgroundColor={"white"}
+          backgroundColor={bgColor}
           width="full"
           flexFlow="row nowrap">
           {action.data.status === "pending" && <Spinner color="blue.300" size="sm" />}
@@ -120,7 +149,9 @@ function ActionAccordionItem({
           </LinkOverlay>
 
           <Tooltip label={dayjs(action.data.createdAt).format()}>
-            <Text color="gray.600">{dayjs(action.data.createdAt).fromNow()}</Text>
+            <Text fontWeight="normal" color="gray.600" _dark={{ color: "gray.400" }}>
+              {dayjs(action.data.createdAt).fromNow()}
+            </Text>
           </Tooltip>
 
           {action.data.status === "pending" && (
@@ -130,7 +161,7 @@ function ActionAccordionItem({
               leftIcon={<HiStop />}
               onClick={(e) => {
                 e.stopPropagation()
-                action.cancel()
+                handleCancelClicked()
               }}>
               Cancel
             </Button>
@@ -141,14 +172,13 @@ function ActionAccordionItem({
             <AccordionIcon />
           </HStack>
         </AccordionButton>
-      </h2>
+      </Heading>
       <AccordionPanel
-        bgColor={"white"}
-        border={isExpanded ? "1px solid" : "none"}
+        bgColor={bgColor}
+        borderWidth={isExpanded ? "thin" : "unset"}
         borderTop={"none"}
         borderBottomRadius={"md"}
-        padding={0}
-        borderColor={"divider.main"}>
+        padding={0}>
         {isExpanded && <ActionTerminal actionID={actionID} />}
       </AccordionPanel>
     </>
@@ -170,11 +200,46 @@ function ActionTerminal({ actionID }: TActionTerminalProps) {
   } = useStreamingTerminal({ searchOptions, borderRadius: "none" })
 
   useEffect(() => {
+    if (!action) return
+
+    let isActive = true
     clearTerminal()
 
-    return action?.connectOrReplay((e) => {
-      connectStream(e)
+    // Create a new subscription with a delay for replay
+    const setupStream = async () => {
+      if (action.data.status === "pending") {
+        // For pending actions, subscribe immediately
+        return action.connectOrReplay((e) => {
+          if (isActive) {
+            connectStream(e)
+          }
+        })
+      } else {
+        // For completed actions, add a small delay to ensure cleanup
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        if (!isActive) return () => {}
+
+        return action.connectOrReplay((e) => {
+          if (isActive) {
+            connectStream(e)
+          }
+        })
+      }
+    }
+
+    let cleanup: VoidFunction | void
+    setupStream().then((unsubscribe) => {
+      if (isActive) {
+        cleanup = unsubscribe
+      } else {
+        unsubscribe?.()
+      }
     })
+
+    return () => {
+      isActive = false
+      cleanup?.()
+    }
   }, [action, clearTerminal, connectStream])
 
   return (

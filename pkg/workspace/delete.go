@@ -7,19 +7,20 @@ import (
 	client2 "github.com/loft-sh/devpod/pkg/client"
 	"github.com/loft-sh/devpod/pkg/client/clientimplementation"
 	"github.com/loft-sh/devpod/pkg/config"
+	"github.com/loft-sh/devpod/pkg/platform"
 	"github.com/loft-sh/log"
 	"github.com/pkg/errors"
 )
 
-func Delete(ctx context.Context, devPodConfig *config.Config, args []string, ignoreNotFound, force bool, deleteOptions client2.DeleteOptions, log log.Logger) (string, error) {
+func Delete(ctx context.Context, devPodConfig *config.Config, args []string, ignoreNotFound, force bool, deleteOptions client2.DeleteOptions, owner platform.OwnerFilter, log log.Logger) (string, error) {
 	// try to load workspace
-	client, err := Get(ctx, devPodConfig, args, false, log)
+	client, err := Get(ctx, devPodConfig, args, false, owner, false, log)
 	if err != nil {
 		if len(args) == 0 {
 			return "", fmt.Errorf("cannot delete workspace because there was an error loading the workspace: %w. Please specify the id of the workspace you want to delete. E.g. 'devpod delete my-workspace --force'", err)
 		}
 
-		workspaceID := Exists(ctx, devPodConfig, args, "", log)
+		workspaceID := Exists(ctx, devPodConfig, args, "", owner, log)
 		if workspaceID == "" {
 			if ignoreNotFound {
 				return "", nil
@@ -44,7 +45,7 @@ func Delete(ctx context.Context, devPodConfig *config.Config, args []string, ign
 		return workspaceID, nil
 	}
 
-	// skip deletion if imported
+	// only remove local folder if workspace is imported or pro
 	workspaceConfig := client.WorkspaceConfig()
 	if !force && workspaceConfig.Imported {
 		// delete workspace folder
@@ -53,18 +54,20 @@ func Delete(ctx context.Context, devPodConfig *config.Config, args []string, ign
 			return "", err
 		}
 
-		log.Donef("Skip remote deletion of workspace %s as it is imported, if you really want to delete this workspace also remotely, run with --force", client.Workspace())
+		log.Donef("Skip remote deletion of workspace %s, if you really want to delete this workspace also remotely, run with --force", client.Workspace())
 		return client.Workspace(), nil
 	}
 
 	// get instance status
 	if !force {
 		// lock workspace only if we don't force deletion
-		err := client.Lock(ctx)
-		if err != nil {
-			return "", err
+		if !deleteOptions.Platform.Enabled {
+			err := client.Lock(ctx)
+			if err != nil {
+				return "", err
+			}
+			defer client.Unlock()
 		}
-		defer client.Unlock()
 
 		// retrieve instance status
 		instanceStatus, err := client.Status(ctx, client2.StatusOptions{})
@@ -100,7 +103,7 @@ func deleteSingleMachine(ctx context.Context, client client2.BaseWorkspaceClient
 	}
 
 	// try to find other workspace with same machine
-	workspaces, err := List(ctx, devPodConfig, false, log)
+	workspaces, err := List(ctx, devPodConfig, false, platform.SelfOwnerFilter, log)
 	if err != nil {
 		return false, errors.Wrap(err, "list workspaces")
 	}

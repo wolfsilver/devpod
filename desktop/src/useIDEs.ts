@@ -3,6 +3,7 @@ import { useMemo } from "react"
 import { client } from "./client"
 import { useSettings } from "./contexts"
 import { QueryKeys } from "./queryKeys"
+import { TIDE, TIDEs } from "@/types"
 
 // See pkg/config/ide.go for names
 const FLEET_IDE_NAME = "fleet"
@@ -11,9 +12,9 @@ const VSCODE_INSIDERS = "vscode-insiders"
 const CURSOR = "cursor"
 const POSITRON = "positron"
 const CODIUM = "codium"
-const JUPYTER_DESKTOP = "jupyterdesktop"
 const ZED = "zed"
-const MARIMO = "marimo"
+const RSTUDIO = "rstudio"
+const WINDSURF = "windsurf"
 
 export function useIDEs() {
   const idesQuery = useQuery({
@@ -33,9 +34,9 @@ export function useIDEs() {
         if (ide.name === CURSOR && settings.experimental_cursor) return true
         if (ide.name === POSITRON && settings.experimental_positron) return true
         if (ide.name === CODIUM && settings.experimental_codium) return true
-        if (ide.name === JUPYTER_DESKTOP && settings.experimental_jupyterDesktop) return true
         if (ide.name === ZED && settings.experimental_zed) return true
-        if (ide.name === MARIMO && settings.experimental_marimo) return true
+        if (ide.name === RSTUDIO && settings.experimental_rstudio) return true
+        if (ide.name === WINDSURF && settings.experimental_windsurf) return true
 
         return false
       }),
@@ -46,4 +47,32 @@ export function useIDEs() {
     () => ({ ides, defaultIDE: idesQuery.data?.find((ide) => ide.default) }),
     [ides, idesQuery.data]
   )
+}
+
+export function useGroupIDEs(ides?: TIDEs) {
+  return useMemo(() => {
+    return ides?.reduce(
+      (accum, ide) => {
+        const group = ide.group ?? "Other"
+
+        if (group === "Primary") {
+          accum.primary.push(ide)
+        } else {
+          if (!accum.subMenus[group]) {
+            accum.subMenus[group] = []
+            accum.subMenuGroups.push(group)
+          }
+
+          accum.subMenus[group]!.push(ide)
+        }
+
+        return accum
+      },
+      {
+        primary: [] as TIDE[],
+        subMenuGroups: [] as string[],
+        subMenus: {} as { [key: string]: TIDE[] },
+      }
+    )
+  }, [ides])
 }

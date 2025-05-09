@@ -20,6 +20,8 @@ const (
 	MachineConfigFile     = "machine.json"
 	ProInstanceConfigFile = "pro.json"
 	ProviderConfigFile    = "provider.json"
+
+	DaemonStateFile = "devpod_ts.state"
 )
 
 func GetProInstancesDir(context string) (string, error) {
@@ -74,6 +76,15 @@ func GetProviderDir(context, providerName string) (string, error) {
 	}
 
 	return filepath.Join(configDir, "contexts", context, "providers", providerName), nil
+}
+
+func GetDaemonDir(context, providerName string) (string, error) {
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(configDir, "contexts", context, "providers", providerName, "daemon"), nil
 }
 
 func GetProviderBinariesDir(context, providerName string) (string, error) {
